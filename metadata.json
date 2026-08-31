@@ -1,0 +1,8 @@
+{
+  "name": "MarketLead Business Demand Scraper",
+  "description": "Scrape live customer demands across 500+ business categories from the last 6 months, create company pages, contact leads via Email, WhatsApp, or autonomous A2A Agents, converse with buyers, and generate custom proposals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
