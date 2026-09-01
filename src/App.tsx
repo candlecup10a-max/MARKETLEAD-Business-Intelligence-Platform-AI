@@ -10,6 +10,18 @@ import { AdminPage } from './components/AdminPage';
 import { DEFAULT_BUSINESS_TYPES } from './data/defaultBusinessTypes';
 import { BusinessType, CompanyProfile, CustomerDemand, DemandStatus, AdminUser, Proposal, MessageLog } from './types';
 import { scrapeDemandsApi } from './services/apiService';
+import {
+  subscribeToAuthState,
+  fetchBusinessTypesFromFirestore,
+  saveBusinessTypeToFirestore,
+  fetchCompanyProfilesFromFirestore,
+  saveCompanyProfileToFirestore,
+  fetchDemandsFromFirestore,
+  saveDemandToFirestore,
+  batchSaveDemandsToFirestore,
+  subscribeToDemands,
+  syncUserToFirestore,
+} from './services/firestoreService';
 
 const STORAGE_KEYS = {
   USER: 'marketlead_admin_user',
@@ -61,7 +73,7 @@ export function App() {
   // Active Navigation Tab
   const [activeTab, setActiveTab] = useState<'scraper' | 'company' | 'catalog' | 'conversations' | 'proposals' | 'admin'>('scraper');
 
-  // Authenticated Admin User Session (Stored in localStorage)
+  // Authenticated Admin User Session (Stored in localStorage & Synced with Firebase Auth)
   const [currentUser, setCurrentUser] = useState<AdminUser | null>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.USER);
@@ -71,6 +83,97 @@ export function App() {
     }
   });
 
+  // Track Firebase cloud sync status
+  const [firestoreConnected, setFirestoreConnected] = useState<boolean>(true);
+
+  // Subscribe to Firebase Auth State changes
+  useEffect(() => {
+    const unsubscribe = subscribeToAuthState((fbUser) => {
+      if (fbUser) {
+        const isSuperAdmin = fbUser.email === 'aisay.company@gmail.com' || fbUser.email?.includes('admin');
+        const user: AdminUser = {
+          id: fbUser.uid,
+          name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Authenticated User',
+          email: fbUser.email || '',
+          role: isSuperAdmin ? 'Super Admin' : 'Lead Ops Manager',
+          avatarUrl: fbUser.photoURL || undefined,
+          lastLogin: new Date().toLocaleString(),
+          permissions: isSuperAdmin
+            ? ['Full System Scraper Access', 'A2A Agent Orchestration', 'Database Export', 'Financial Proposals Approval', 'User Management']
+            : ['Web Scraper Execution', 'Country Filter Management', 'Demand Enrichment', 'Outreach Queue'],
+        };
+        setCurrentUser(user);
+        try {
+          localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+        } catch {}
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch persisted data from Firestore on initial app mount
+  useEffect(() => {
+    async function loadCloudData() {
+      try {
+        const [cloudTypes, cloudProfiles] = await Promise.all([
+          fetchBusinessTypesFromFirestore(),
+          fetchCompanyProfilesFromFirestore(),
+        ]);
+
+        if (cloudTypes.length > 0) {
+          setBusinessTypes((prev) => {
+            const map = new Map(prev.map((t) => [t.business_id, t]));
+            for (const t of cloudTypes) {
+              map.set(t.business_id, t);
+            }
+            return Array.from(map.values());
+          });
+        }
+
+        if (Object.keys(cloudProfiles).length > 0) {
+          setCompanyProfiles((prev) => ({ ...prev, ...cloudProfiles }));
+        }
+        setFirestoreConnected(true);
+      } catch (err) {
+        console.warn('Initial Firestore data load error (fallback to local):', err);
+      }
+    }
+    loadCloudData();
+  }, []);
+
+  // Real-time listener for current business type demands from Firestore
+  useEffect(() => {
+    const unsub = subscribeToDemands(
+      selectedBusinessType.business_id,
+      (cloudDemands) => {
+        if (cloudDemands.length > 0) {
+          setDemandsByBusiness((prev) => {
+            const existingList: CustomerDemand[] = prev[selectedBusinessType.business_id] || [];
+            const existingMap = new Map<string, CustomerDemand>(existingList.map((d) => [d.id, d]));
+            const merged = cloudDemands.map((d) => {
+              const local = existingMap.get(d.id);
+              if (local && (local.communicationLogs?.length || 0) > (d.communicationLogs?.length || 0)) {
+                return { ...d, communicationLogs: local.communicationLogs, proposals: local.proposals };
+              }
+              return d;
+            });
+
+            return {
+              ...prev,
+              [selectedBusinessType.business_id]: merged,
+            };
+          });
+        }
+      },
+      (err) => {
+        console.warn('Realtime demands sync note:', err.message);
+      }
+    );
+
+    return () => unsub();
+  }, [selectedBusinessType.business_id]);
+
   const handleLogin = (user: AdminUser) => {
     setCurrentUser(user);
     try {
@@ -78,6 +181,8 @@ export function App() {
     } catch (e) {
       console.error(e);
     }
+    syncUserToFirestore(user).catch(() => {});
+    setActiveTab('scraper');
   };
 
   const handleLogout = () => {
@@ -87,6 +192,7 @@ export function App() {
     } catch (e) {
       console.error(e);
     }
+    setActiveTab('admin');
   };
 
   // Company Profiles Cache (keyed by business_id) with LocalStorage Persistence
@@ -213,6 +319,11 @@ export function App() {
             return d;
           });
 
+          // Sync freshly scraped demands to Firebase Firestore in background
+          batchSaveDemandsToFirestore(merged).catch((err) =>
+            console.warn('Firestore background batch save:', err)
+          );
+
           return {
             ...prev,
             [bt.business_id]: merged,
@@ -226,12 +337,13 @@ export function App() {
     }
   };
 
-  // Initial load: scrape for default selected category if empty
+  // Initial load: scrape for default selected category if empty (only when authenticated)
   useEffect(() => {
+    if (!currentUser) return;
     if (!demandsByBusiness[selectedBusinessType.business_id] || demandsByBusiness[selectedBusinessType.business_id].length === 0) {
       handleRunScraper(selectedBusinessType, 100);
     }
-  }, [selectedBusinessType.business_id]);
+  }, [selectedBusinessType.business_id, currentUser]);
 
   // Handle Select Business Type
   const handleSelectBusinessType = (bt: BusinessType) => {
@@ -245,12 +357,16 @@ export function App() {
   const handleAddCustomBusinessType = (customBt: BusinessType) => {
     setBusinessTypes((prev) => [customBt, ...prev]);
     setSelectedBusinessType(customBt);
+    saveBusinessTypeToFirestore(customBt).catch(() => {});
     handleRunScraper(customBt, 100);
   };
 
   // Handle Import CSV
   const handleImportCSV = (newTypes: BusinessType[]) => {
     setBusinessTypes((prev) => [...newTypes, ...prev]);
+    for (const t of newTypes) {
+      saveBusinessTypeToFirestore(t).catch(() => {});
+    }
     if (newTypes.length > 0) {
       setSelectedBusinessType(newTypes[0]);
       handleRunScraper(newTypes[0], 100);
@@ -263,6 +379,9 @@ export function App() {
       ...prev,
       [selectedBusinessType.business_id]: profile,
     }));
+    saveCompanyProfileToFirestore(selectedBusinessType.business_id, profile).catch((err) =>
+      console.warn('Firestore company profile save:', err)
+    );
   };
 
   // Handle Open Customer Modal
@@ -276,6 +395,11 @@ export function App() {
 
   // Handle Update Demand (status, communication logs, proposals)
   const handleUpdateDemand = (updatedDemand: CustomerDemand) => {
+    // Persist immediately to Firebase Firestore
+    saveDemandToFirestore(updatedDemand).catch((err) =>
+      console.warn('Firestore single demand update:', err)
+    );
+
     setDemandsByBusiness((prev) => {
       const next = { ...prev };
       // Search in all categories to update wherever this demand belongs
@@ -325,6 +449,11 @@ export function App() {
             status: target.status === 'New' ? 'Proposal Sent' : target.status,
             proposals: updatedProposals,
           };
+          // Persist proposal to Firestore
+          saveDemandToFirestore(updatedDemand).catch((err) =>
+            console.warn('Firestore proposal save:', err)
+          );
+
           const updatedList = [...list];
           updatedList[idx] = updatedDemand;
           next[bizId] = updatedList;
@@ -351,6 +480,11 @@ export function App() {
             ...target,
             proposals: (target.proposals || []).filter((p) => p.id !== proposalId),
           };
+          // Persist deletion to Firestore
+          saveDemandToFirestore(updatedDemand).catch((err) =>
+            console.warn('Firestore proposal delete sync:', err)
+          );
+
           const updatedList = [...list];
           updatedList[idx] = updatedDemand;
           next[bizId] = updatedList;
@@ -385,6 +519,11 @@ export function App() {
             status: newStatus,
             communicationLogs: [log, ...(target.communicationLogs || [])],
           };
+          // Persist outreach log to Firestore
+          saveDemandToFirestore(updatedDemand).catch((err) =>
+            console.warn('Firestore outreach log sync:', err)
+          );
+
           const updatedList = [...list];
           updatedList[idx] = updatedDemand;
           next[bizId] = updatedList;
@@ -411,6 +550,11 @@ export function App() {
             ...target,
             communicationLogs: (target.communicationLogs || []).filter((l) => l.id !== logId),
           };
+          // Persist log delete to Firestore
+          saveDemandToFirestore(updatedDemand).catch((err) =>
+            console.warn('Firestore outreach log delete sync:', err)
+          );
+
           const updatedList = [...list];
           updatedList[idx] = updatedDemand;
           next[bizId] = updatedList;
@@ -428,7 +572,14 @@ export function App() {
   const handleUpdateDemandStatus = (demandId: string, status: DemandStatus) => {
     setDemandsByBusiness((prev) => {
       const currentList = prev[selectedBusinessType.business_id] || [];
-      const updatedList = currentList.map((d) => (d.id === demandId ? { ...d, status } : d));
+      const updatedList = currentList.map((d) => {
+        if (d.id === demandId) {
+          const updated = { ...d, status };
+          saveDemandToFirestore(updated).catch(() => {});
+          return updated;
+        }
+        return d;
+      });
       return {
         ...prev,
         [selectedBusinessType.business_id]: updatedList,
@@ -438,6 +589,9 @@ export function App() {
 
   // Handle Add Real Demand / RFP
   const handleAddRealDemand = (demand: CustomerDemand) => {
+    saveDemandToFirestore(demand).catch((err) =>
+      console.warn('Firestore single demand insert:', err)
+    );
     setDemandsByBusiness((prev) => {
       const currentList = prev[selectedBusinessType.business_id] || [];
       return {
@@ -449,6 +603,9 @@ export function App() {
 
   // Handle Batch Add Real Demands / RFPs
   const handleBatchAddRealDemands = (newDemands: CustomerDemand[]) => {
+    batchSaveDemandsToFirestore(newDemands).catch((err) =>
+      console.warn('Firestore batch demand insert:', err)
+    );
     setDemandsByBusiness((prev) => {
       const currentList = prev[selectedBusinessType.business_id] || [];
       const existingIds = new Set(newDemands.map((d) => d.id));
@@ -462,6 +619,39 @@ export function App() {
   // Collect all proposals across all businesses
   const allDemandsAcrossAllTypes = Object.values(demandsByBusiness).flat();
 
+  // If user is not authenticated, strictly lock down application and show login gateway only
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-teal-600 selection:text-white">
+        {/* Top Header in Authentication Gateway Mode */}
+        <Navbar
+          activeTab="admin"
+          setActiveTab={() => {}}
+          selectedBusinessType={selectedBusinessType}
+          companyProfile={currentCompanyProfile}
+          openCompanyModal={() => {}}
+          isScraping={false}
+          totalDemandsCount={0}
+          currentUser={null}
+          onLogout={handleLogout}
+          firestoreConnected={firestoreConnected}
+        />
+
+        {/* Gatekeeper Login Screen */}
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col items-center justify-center">
+          <AdminPage
+            currentUser={null}
+            onLogin={handleLogin}
+            onLogout={handleLogout}
+            onNavigateTab={setActiveTab}
+            selectedBusinessType={selectedBusinessType}
+            totalDemandsCount={0}
+          />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-teal-600 selection:text-white">
       {/* Top Sticky Navigation */}
@@ -474,6 +664,8 @@ export function App() {
         isScraping={isScraping}
         totalDemandsCount={currentDemands.length}
         currentUser={currentUser}
+        onLogout={handleLogout}
+        firestoreConnected={firestoreConnected}
       />
 
       {/* Main App Canvas */}
@@ -490,6 +682,7 @@ export function App() {
             onUpdateDemandStatus={handleUpdateDemandStatus}
             onAddDemand={handleAddRealDemand}
             onBatchAddDemands={handleBatchAddRealDemands}
+            onUpdateDemand={handleUpdateDemand}
           />
         )}
 
@@ -564,6 +757,7 @@ export function App() {
         <DemandDetailModal
           demand={selectedDemand}
           companyProfile={currentCompanyProfile}
+          businessType={selectedBusinessType}
           isOpen={!!selectedDemand}
           initialTab={modalInitialTab}
           onClose={() => setSelectedDemand(null)}

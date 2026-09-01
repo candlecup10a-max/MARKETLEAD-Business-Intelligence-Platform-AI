@@ -46,10 +46,12 @@ export interface MessageLog {
 
 export interface A2ANegotiationStep {
   step: number;
+  stepNumber?: number;
   agent: 'VendorAgent' | 'BuyerAgent';
   action: string;
   payload: Record<string, any>;
   humanExplanation: string;
+  message?: string;
   timestamp: string;
 }
 
@@ -166,6 +168,9 @@ export interface CustomerDemand {
   communicationLogs: MessageLog[];
   proposals: Proposal[];
   a2aLogs?: A2ANegotiationStep[];
+  isVerifiedReal?: boolean;
+  verifiedAt?: string;
+  verificationResult?: PostDemandCheckResult;
 }
 
 export interface ScraperStats {
@@ -175,13 +180,59 @@ export interface ScraperStats {
   dateRangeMonths: number;
 }
 
+export type AdminUserRole = 'Super Admin' | 'Lead Ops Manager' | 'Commercial Executive' | 'Scraper Specialist' | 'Read-Only Auditor';
+export type UserAccountStatus = 'Active' | 'Deactivated' | 'Pending Approval';
+
 export interface AdminUser {
   id: string;
   name: string;
   email: string;
-  role: 'Super Admin' | 'Lead Ops Manager' | 'Commercial Executive';
+  role: AdminUserRole;
+  status?: UserAccountStatus;
   avatarUrl?: string;
   lastLogin: string;
+  dateAdded?: string;
+  department?: string;
   permissions: string[];
+  allowedModules?: string[];
+  accessLevel?: 'Full Root Access' | 'Restricted Operational' | 'Commercial Only' | 'View Only';
+  deactivatedReason?: string;
+  deactivatedAt?: string;
+}
+
+export type DemandIntentClassification =
+  | 'Commercial RFP / Project Hiring'
+  | 'Urgent Service Need'
+  | 'Vendor Replacement / Switch'
+  | 'Pricing & Feasibility Inquiry'
+  | 'General Discussion / Advice (No Commercial Demand)'
+  | 'Self-Promotion / Vendor Selling (No Buyer Demand)'
+  | 'Spam / Irrelevant Content';
+
+export interface PostDemandCheckResult {
+  hasDemand: boolean;
+  demandConfidenceScore: number; // 0 to 100
+  intentClassification: DemandIntentClassification;
+  demandSummary: string;
+  detectedSignals: {
+    positiveBuyingSignals: string[];
+    riskOrNegativeSignals: string[];
+  };
+  keyEntities: {
+    targetAudienceOrNiche: string;
+    estimatedBudgetLevel: string;
+    urgencyTimeline: string;
+    requiredServices: string[];
+    potentialCustomerName?: string;
+    potentialCustomerCompany?: string;
+    inferredLocation?: string;
+    contactChannelFound?: string;
+  };
+  businessAlignment: {
+    targetBusinessTypeName: string;
+    fitScore: number; // 0 to 100
+    fitRationale: string;
+  };
+  extractedDemand?: CustomerDemand;
 }
 

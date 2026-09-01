@@ -29,12 +29,18 @@ import {
   ChevronUp,
   PlusCircle,
   Download,
-  Upload
+  Upload,
+  ShieldCheck,
+  RotateCw,
+  SearchCheck
 } from 'lucide-react';
-import { CustomerDemand, BusinessType, CompanyProfile, DemandStatus, UrgencyLevel } from '../types';
+import { CustomerDemand, BusinessType, CompanyProfile, DemandStatus, UrgencyLevel, PostDemandCheckResult } from '../types';
 import { CountryDropdown } from './CountryDropdown';
 import { findCountry, COUNTRIES } from '../data/countries';
 import { ImportRealDemandModal } from './ImportRealDemandModal';
+import { PostDemandTesterModal } from './PostDemandTesterModal';
+import { DemandVerificationModal } from './DemandVerificationModal';
+import { verifyScrapedDemandApi } from '../services/apiService';
 
 interface ScraperDashboardProps {
   demands: CustomerDemand[];
@@ -42,10 +48,11 @@ interface ScraperDashboardProps {
   companyProfile: CompanyProfile;
   onScrape: (count?: number) => void;
   isScraping: boolean;
-  onSelectCustomer: (demand: CustomerDemand, initialTab?: 'overview' | 'email' | 'whatsapp' | 'a2a' | 'chat' | 'proposal') => void;
+  onSelectCustomer: (demand: CustomerDemand, initialTab?: 'overview' | 'email' | 'whatsapp' | 'a2a' | 'chat' | 'proposal' | 'verification') => void;
   onUpdateDemandStatus: (demandId: string, status: DemandStatus) => void;
   onAddDemand?: (demand: CustomerDemand) => void;
   onBatchAddDemands?: (demands: CustomerDemand[]) => void;
+  onUpdateDemand?: (demand: CustomerDemand) => void;
 }
 
 export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
@@ -58,6 +65,7 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
   onUpdateDemandStatus,
   onAddDemand,
   onBatchAddDemands,
+  onUpdateDemand,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCountryCode, setSelectedCountryCode] = useState<string>('All');
@@ -66,12 +74,21 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [urgencyFilter, setUrgencyFilter] = useState<string>('All');
   const [originFilter, setOriginFilter] = useState<string>('All');
+  const [verificationFilter, setVerificationFilter] = useState<string>('All');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [itemsPerPage, setItemsPerPage] = useState<number>(12);
   const [scrapeBatchSize, setScrapeBatchSize] = useState<number>(100);
   const [expandedDemandIds, setExpandedDemandIds] = useState<Set<string>>(new Set());
   const [expandAll, setExpandAll] = useState<boolean>(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
+  const [isTestPostModalOpen, setIsTestPostModalOpen] = useState<boolean>(false);
+
+  // Demand Verification Modal State
+  const [selectedDemandForAudit, setSelectedDemandForAudit] = useState<CustomerDemand | null>(null);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState<boolean>(false);
+  const [isBatchVerifying, setIsBatchVerifying] = useState<boolean>(false);
+  const [batchVerifyProgress, setBatchVerifyProgress] = useState<{ current: number; total: number } | null>(null);
+  const [verifyingDemandIds, setVerifyingDemandIds] = useState<Set<string>>(new Set());
 
   const toggleDemandExpanded = (id: string) => {
     setExpandedDemandIds((prev) => {
@@ -129,6 +146,72 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
     document.body.removeChild(link);
   };
 
+  // Open Demand Verification Modal
+  const handleOpenAuditModal = (demand: CustomerDemand, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedDemandForAudit(demand);
+    setIsAuditModalOpen(true);
+  };
+
+  // Single Demand In-line Verification Action
+  const handleVerifySingleInline = async (demand: CustomerDemand, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (verifyingDemandIds.has(demand.id)) return;
+
+    setVerifyingDemandIds((prev) => new Set(prev).add(demand.id));
+    try {
+      const res = await verifyScrapedDemandApi(demand, selectedBusinessType, companyProfile);
+      const updated: CustomerDemand = {
+        ...demand,
+        isVerifiedReal: res.isVerifiedReal,
+        verifiedAt: res.verifiedAt,
+        verificationResult: res.verificationResult,
+      };
+      if (onUpdateDemand) {
+        onUpdateDemand(updated);
+      }
+    } catch (err) {
+      console.warn('Single demand verification failed:', err);
+    } finally {
+      setVerifyingDemandIds((prev) => {
+        const next = new Set(prev);
+        next.delete(demand.id);
+        return next;
+      });
+    }
+  };
+
+  // Batch Verify All Visible Demands
+  const handleBatchVerifyAllDemands = async () => {
+    const targetDemands = filteredAndSortedDemands.slice(0, 20); // Verify top visible batch
+    if (targetDemands.length === 0 || isBatchVerifying) return;
+
+    setIsBatchVerifying(true);
+    setBatchVerifyProgress({ current: 0, total: targetDemands.length });
+
+    for (let i = 0; i < targetDemands.length; i++) {
+      const target = targetDemands[i];
+      setBatchVerifyProgress({ current: i + 1, total: targetDemands.length });
+      try {
+        const res = await verifyScrapedDemandApi(target, selectedBusinessType, companyProfile);
+        const updated: CustomerDemand = {
+          ...target,
+          isVerifiedReal: res.isVerifiedReal,
+          verifiedAt: res.verifiedAt,
+          verificationResult: res.verificationResult,
+        };
+        if (onUpdateDemand) {
+          onUpdateDemand(updated);
+        }
+      } catch (e) {
+        console.warn(`Failed verifying demand ${target.id}:`, e);
+      }
+    }
+
+    setIsBatchVerifying(false);
+    setBatchVerifyProgress(null);
+  };
+
   // Filter & Sort
   const filteredAndSortedDemands = useMemo(() => {
     // Current live calendar reference: August 2026
@@ -158,6 +241,14 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
         matchOrigin = d.leadOrigin === 'web-scraped' || !d.leadOrigin;
       }
 
+      // Verification Authenticity Filter
+      let matchVerification = true;
+      if (verificationFilter === 'Verified Real') {
+        matchVerification = d.isVerifiedReal !== false;
+      } else if (verificationFilter === 'Audit Pending') {
+        matchVerification = d.isVerifiedReal === false || !d.verificationResult;
+      }
+
       // Country filter across 249 countries
       let matchCountry = true;
       if (selectedCountryCode && selectedCountryCode !== 'All') {
@@ -168,7 +259,7 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
           (countryObj ? locLower.includes(countryObj.name.toLowerCase()) : false);
       }
 
-      return withinRange && matchSearch && matchStatus && matchUrgency && matchOrigin && matchCountry;
+      return withinRange && matchSearch && matchStatus && matchUrgency && matchOrigin && matchVerification && matchCountry;
     });
 
     // Sorting (strictly by publishedDate descending by default as per prompt)
@@ -297,15 +388,44 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
           {/* Scraper Action Button, Import Real RFP & Batch Size Controls */}
           <div className="flex flex-col items-stretch sm:items-end gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
+              {/* Test Real Post for Demand Button */}
+              <button
+                id="test-post-demand-btn"
+                type="button"
+                onClick={() => setIsTestPostModalOpen(true)}
+                className="flex items-center justify-center space-x-2 px-3.5 py-3 bg-indigo-600/90 hover:bg-indigo-600 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-md shadow-indigo-600/20 border border-indigo-400/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                title="Enter or paste any real post to check if real customer demand is present"
+              >
+                <SearchCheck className="h-4 w-4 text-indigo-200" />
+                <span>Test Post Demand</span>
+              </button>
+
+              {/* Batch Verify Demands Authenticity Button */}
+              <button
+                id="verify-all-demands-btn"
+                type="button"
+                onClick={handleBatchVerifyAllDemands}
+                disabled={isBatchVerifying}
+                className="flex items-center justify-center space-x-2 px-3.5 py-3 bg-teal-800/90 hover:bg-teal-700 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-md shadow-teal-900/30 border border-teal-500/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer disabled:opacity-60"
+                title="Run live AI authenticity audit on scraped demands in view"
+              >
+                <ShieldCheck className={`h-4 w-4 text-teal-300 ${isBatchVerifying ? 'animate-spin' : ''}`} />
+                <span>
+                  {isBatchVerifying && batchVerifyProgress
+                    ? `Auditing (${batchVerifyProgress.current}/${batchVerifyProgress.total})...`
+                    : 'Verify Demands AI'}
+                </span>
+              </button>
+
               {/* Import Real RFP / Demands Button */}
               <button
                 id="import-real-demand-btn"
                 type="button"
                 onClick={() => setIsImportModalOpen(true)}
-                className="flex items-center justify-center space-x-2 px-4 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-lg shadow-emerald-600/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                className="flex items-center justify-center space-x-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-lg shadow-emerald-600/20 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
               >
                 <PlusCircle className="h-4 w-4" />
-                <span>Import Real Demand / RFP</span>
+                <span>Import Real RFP</span>
               </button>
 
               {/* Scrape Button */}
@@ -313,7 +433,7 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
                 id="run-web-scraper-btn"
                 onClick={() => onScrape(scrapeBatchSize)}
                 disabled={isScraping}
-                className="flex items-center justify-center space-x-2 px-5 py-3.5 bg-gradient-to-r from-teal-600 via-teal-700 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-lg shadow-teal-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60 disabled:hover:scale-100 cursor-pointer"
+                className="flex items-center justify-center space-x-2 px-5 py-3 bg-gradient-to-r from-teal-600 via-teal-700 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-lg shadow-teal-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60 disabled:hover:scale-100 cursor-pointer"
               >
                 <Radar className={`h-4 w-4 ${isScraping ? 'animate-spin text-amber-300' : 'animate-pulse'}`} />
                 <span>{isScraping ? `Scanning Web (${scrapeBatchSize})...` : `Scrape ${scrapeBatchSize} Leads`}</span>
@@ -411,6 +531,24 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
                 <option value="All" className="bg-white text-slate-900">All Real Demands</option>
                 <option value="Live Web Scraped" className="bg-white text-slate-900">Live Web Scraped RFPs</option>
                 <option value="Real User Imported" className="bg-white text-slate-900">Real Client Demands</option>
+              </select>
+            </div>
+
+            {/* Authenticity / Verification Status Filter */}
+            <div className="flex items-center space-x-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200 text-xs">
+              <ShieldCheck className="h-3.5 w-3.5 text-teal-600 hidden sm:inline" />
+              <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">Audit:</span>
+              <select
+                value={verificationFilter}
+                onChange={(e) => {
+                  setVerificationFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="bg-transparent text-xs text-slate-800 font-medium focus:outline-none cursor-pointer"
+              >
+                <option value="All" className="bg-white text-slate-900">All Verification Statuses</option>
+                <option value="Verified Real" className="bg-white text-slate-900">Verified Real Leads</option>
+                <option value="Audit Pending" className="bg-white text-slate-900">Audit Pending / Untested</option>
               </select>
             </div>
 
@@ -552,12 +690,38 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
                 <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
                   {/* Left: Customer Info & Demand Specs */}
                   <div className="flex-1 space-y-3">
-                    {/* Top Row: Date, Urgency, Status, Origin, Source */}
+                    {/* Top Row: Date, Urgency, Status, Origin, Source, Verification Badge */}
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="flex items-center space-x-1 text-[11px] font-bold text-teal-700 bg-teal-50 border border-teal-200 px-2.5 py-0.5 rounded-full">
                         <Calendar className="h-3 w-3" />
                         <span>Published: {formatDate(demand.publishedDate)}</span>
                       </span>
+
+                      {/* Demand Authenticity Badge */}
+                      {demand.isVerifiedReal !== false ? (
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenAuditModal(demand, e)}
+                          className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300 flex items-center space-x-1 transition-colors cursor-pointer"
+                          title="Click to view AI Authenticity Verification Proof"
+                        >
+                          <ShieldCheck className="h-3 w-3 text-emerald-600 mr-0.5" />
+                          <span>
+                            Verified Real ({demand.verificationResult?.demandConfidenceScore || 92}%)
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => handleVerifySingleInline(demand, e)}
+                          disabled={verifyingDemandIds.has(demand.id)}
+                          className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 flex items-center space-x-1 transition-colors cursor-pointer"
+                          title="Click to test if this demand is genuine commercial demand"
+                        >
+                          <RotateCw className={`h-3 w-3 text-amber-600 ${verifyingDemandIds.has(demand.id) ? 'animate-spin' : ''}`} />
+                          <span>{verifyingDemandIds.has(demand.id) ? 'Auditing...' : 'Test if Real'}</span>
+                        </button>
+                      )}
 
                       {getOriginBadge(demand.leadOrigin)}
                       {getUrgencyBadge(demand.urgency)}
@@ -733,6 +897,17 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
                           <MessageSquare className="h-3.5 w-3.5 text-cyan-600" />
                           <span>Direct Chat</span>
                         </button>
+
+                        {/* 6. Authenticity Proof & Audit Report */}
+                        <button
+                          id={`btn-audit-${demand.id}`}
+                          onClick={(e) => handleOpenAuditModal(demand, e)}
+                          className="flex items-center justify-center space-x-1 py-1.5 px-2 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-slate-800 hover:text-emerald-800 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                          title="Open AI Authenticity Verification & Intent Audit"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                          <span>Proof Audit</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -848,6 +1023,46 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
           }}
           companyProfile={companyProfile}
           selectedBusinessType={selectedBusinessType}
+        />
+      )}
+
+      {/* Modal for Testing Real Posts for Demand */}
+      {isTestPostModalOpen && (
+        <PostDemandTesterModal
+          isOpen={isTestPostModalOpen}
+          onClose={() => setIsTestPostModalOpen(false)}
+          onImportDemand={(newDemand) => {
+            if (onAddDemand) {
+              onAddDemand(newDemand);
+            }
+          }}
+          selectedBusinessType={selectedBusinessType}
+          companyProfile={companyProfile}
+        />
+      )}
+
+      {/* Modal for Verifying Scraped Demands (Real vs Fake Audit) */}
+      {isAuditModalOpen && selectedDemandForAudit && (
+        <DemandVerificationModal
+          isOpen={isAuditModalOpen}
+          onClose={() => {
+            setIsAuditModalOpen(false);
+            setSelectedDemandForAudit(null);
+          }}
+          demand={selectedDemandForAudit}
+          selectedBusinessType={selectedBusinessType}
+          companyProfile={companyProfile}
+          onUpdateDemand={(updated) => {
+            if (onUpdateDemand) {
+              onUpdateDemand(updated);
+            }
+            setSelectedDemandForAudit(updated);
+          }}
+          onOpenLeadOutreach={(demand, tab) => {
+            setIsAuditModalOpen(false);
+            setSelectedDemandForAudit(null);
+            onSelectCustomer(demand, tab as any);
+          }}
         />
       )}
     </div>

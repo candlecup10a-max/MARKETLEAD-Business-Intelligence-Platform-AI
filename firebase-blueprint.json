@@ -1,0 +1,253 @@
+{
+  "entities": {
+    "business_type": {
+      "title": "Business Type",
+      "description": "A categorized industry or niche domain for lead scraping and company profile management.",
+      "type": "object",
+      "properties": {
+        "business_id": {
+          "type": "string",
+          "description": "Unique identifier for the business type, e.g., BUS-0001."
+        },
+        "business_type_name": {
+          "type": "string",
+          "description": "Name of the business type or industry sector."
+        },
+        "online_or_onsite": {
+          "type": "string",
+          "enum": ["Online", "Onsite", "Hybrid"],
+          "description": "Operational delivery mode."
+        },
+        "place": {
+          "type": "string",
+          "description": "Physical facility or virtual operational location description."
+        },
+        "approximately_area": {
+          "type": "string",
+          "description": "Approximate square footage or spatial scope."
+        },
+        "popularity": {
+          "type": "string",
+          "enum": ["Low", "Medium", "High", "Very High"],
+          "description": "Market demand popularity level."
+        },
+        "isCustom": {
+          "type": "boolean",
+          "description": "Whether this business category was added by the user."
+        }
+      },
+      "required": ["business_id", "business_type_name", "online_or_onsite"]
+    },
+    "company_profile": {
+      "title": "Company Profile",
+      "description": "Commercial profile for a specific business vertical representing vendor capabilities.",
+      "type": "object",
+      "properties": {
+        "businessId": {
+          "type": "string",
+          "description": "Business type identifier link."
+        },
+        "companyName": {
+          "type": "string",
+          "description": "Company legal or trade name."
+        },
+        "tagline": {
+          "type": "string",
+          "description": "Commercial slogan or elevator pitch."
+        },
+        "location": {
+          "type": "string",
+          "description": "Headquarters or primary operating territory."
+        },
+        "website": {
+          "type": "string",
+          "description": "Corporate website URL."
+        },
+        "contactEmail": {
+          "type": "string",
+          "description": "Official contact email address."
+        },
+        "contactPhone": {
+          "type": "string",
+          "description": "Official business phone number."
+        },
+        "a2aAgentId": {
+          "type": "string",
+          "description": "Autonomous Agent identifier for machine-to-machine procurement."
+        },
+        "pricingModel": {
+          "type": "string",
+          "description": "Primary commercial pricing structure."
+        },
+        "valueProposition": {
+          "type": "string",
+          "description": "Key competitive advantages and client value proposition."
+        },
+        "bio": {
+          "type": "string",
+          "description": "Detailed organizational background."
+        }
+      },
+      "required": ["businessId", "companyName", "contactEmail"]
+    },
+    "customer_demand": {
+      "title": "Customer Demand",
+      "description": "Scraped or imported buyer commercial request / RFP opportunity.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique demand identifier."
+        },
+        "businessTypeId": {
+          "type": "string",
+          "description": "Associated business vertical identifier."
+        },
+        "businessTypeName": {
+          "type": "string",
+          "description": "Associated business vertical name."
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Buyer organization or client name."
+        },
+        "customerCompany": {
+          "type": "string",
+          "description": "Company name of the procurement entity."
+        },
+        "contactPerson": {
+          "type": "string",
+          "description": "Lead procurement officer or stakeholder."
+        },
+        "role": {
+          "type": "string",
+          "description": "Stakeholder job title or role."
+        },
+        "email": {
+          "type": "string",
+          "description": "Contact email address."
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact telephone or WhatsApp number."
+        },
+        "a2aEndpoint": {
+          "type": "string",
+          "description": "Endpoint URI for agentic communication."
+        },
+        "a2aAgentId": {
+          "type": "string",
+          "description": "Buyer AI agent ID."
+        },
+        "location": {
+          "type": "string",
+          "description": "Geographical location or country."
+        },
+        "title": {
+          "type": "string",
+          "description": "Short project or requirement headline."
+        },
+        "demandDescription": {
+          "type": "string",
+          "description": "Full requirement description and commercial scope."
+        },
+        "budgetRange": {
+          "type": "string",
+          "description": "Estimated budget or price bracket."
+        },
+        "urgency": {
+          "type": "string",
+          "description": "Procurement urgency level."
+        },
+        "publishedDate": {
+          "type": "string",
+          "description": "Publish or discovery timestamp."
+        },
+        "source": {
+          "type": "string",
+          "description": "Origin portal or scraping channel."
+        },
+        "leadOrigin": {
+          "type": "string",
+          "enum": ["web-scraped", "user-imported"],
+          "description": "Source origin of the lead."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["New", "Contacted", "In Discussion", "Proposal Sent", "Won", "Archived"],
+          "description": "Pipeline status."
+        },
+        "matchScore": {
+          "type": "number",
+          "description": "Matching relevance score from 0 to 100."
+        },
+        "isVerifiedReal": {
+          "type": "boolean",
+          "description": "Whether this demand passed AI authenticity audit."
+        }
+      },
+      "required": ["id", "businessTypeId", "title", "customerCompany", "status"]
+    },
+    "admin_user": {
+      "title": "Admin User Profile",
+      "description": "User profile with role-based access control.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique user or auth UID."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the user."
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the authenticated user."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["Super Admin", "Lead Ops Manager", "Commercial Executive"],
+          "description": "Assigned organizational role."
+        },
+        "lastLogin": {
+          "type": "string",
+          "description": "Timestamp of the last login."
+        }
+      },
+      "required": ["id", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/business_types/{businessTypeId}": {
+      "schema": {
+        "$ref": "#/entities/business_type"
+      },
+      "description": "Industry vertical categories available in the lead generation engine."
+    },
+    "/company_profiles/{businessTypeId}": {
+      "schema": {
+        "$ref": "#/entities/company_profile"
+      },
+      "description": "Customized company profiles for each business category."
+    },
+    "/demands/{demandId}": {
+      "schema": {
+        "$ref": "#/entities/customer_demand"
+      },
+      "description": "Scraped and verified buyer demand opportunities."
+    },
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/admin_user"
+      },
+      "description": "Admin user profile documents keyed by UID."
+    },
+    "/admins/{userId}": {
+      "schema": {
+        "$ref": "#/entities/admin_user"
+      },
+      "description": "Authorized administrative accounts roster."
+    }
+  }
+}
