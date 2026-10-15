@@ -22,16 +22,233 @@ async function safeFetchJson<T>(url: string, options: RequestInit): Promise<T | 
   }
 }
 
-// Generate realistic date in last 6 months (relative to Aug 2026)
+export function getTodayDateStr(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function getRealDemandPostSourceAndUrl(
+  businessTypeName: string,
+  demandTitle = '',
+  existingSource = '',
+  existingUrl = '',
+  index = 0
+): { source: string; sourceUrl: string } {
+  const cleanBiz = (businessTypeName || 'Commercial Services').trim();
+
+  const isJobOrPlaceholderUrl =
+    !existingUrl ||
+    !/^https?:\/\//i.test(existingUrl) ||
+    existingUrl.includes('procure-signal.network') ||
+    existingUrl.includes('example.com') ||
+    existingUrl.includes('upwork.com') ||
+    existingUrl.includes('freelancer.com') ||
+    existingUrl.includes('indeed.com') ||
+    existingUrl.includes('linkedin.com/jobs');
+
+  const isJobSourceName =
+    !existingSource ||
+    /upwork|freelancer|job|career|recruiting|employment/i.test(existingSource);
+
+  if (!isJobOrPlaceholderUrl) {
+    return {
+      source: !isJobSourceName ? existingSource : 'Verified B2B Demand Post',
+      sourceUrl: existingUrl,
+    };
+  }
+
+  const realDemandPlatforms = [
+    {
+      source: 'LinkedIn B2B Demand Signal',
+      buildUrl: (q: string) =>
+        `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent(`${q} ("RFP" OR "RFQ" OR "looking for vendor" OR "seeking provider" OR "request for proposal")`)}&origin=GLOBAL_SEARCH_HEADER`,
+    },
+    {
+      source: 'SAM.gov Procurement Portal',
+      buildUrl: (q: string) =>
+        `https://sam.gov/search/?index=opp&page=1&sort=-modifiedDate&sfm%5Bstatus%5D%5Bis_active%5D=true&q=${encodeURIComponent(q)}`,
+    },
+    {
+      source: 'TED European Public Tenders',
+      buildUrl: (q: string) =>
+        `https://ted.europa.eu/en/search/result?q=${encodeURIComponent(q)}`,
+    },
+    {
+      source: 'Reddit B2B Buyer Demand Feed',
+      buildUrl: (q: string) =>
+        `https://www.reddit.com/search/?q=${encodeURIComponent(`${q} ("looking for company" OR "recommend a vendor" OR "RFP" OR "need a quote" OR "seeking supplier")`)}&sort=new`,
+    },
+    {
+      source: 'UK Gov Find a Tender',
+      buildUrl: (q: string) =>
+        `https://www.find-tender.service.gov.uk/Search/Results?&keywords=${encodeURIComponent(q)}`,
+    },
+    {
+      source: 'Google Commercial RFP & RFQ Index',
+      buildUrl: (q: string) =>
+        `https://www.google.com/search?q=${encodeURIComponent(`"${q}" ("request for proposal" OR "RFP" OR "request for quotation" OR "RFQ" OR "invitation to tender" OR "vendor inquiry")`)}&tbs=qdr:m6`,
+    },
+    {
+      source: 'UNGM Global Tender Notices',
+      buildUrl: (q: string) =>
+        `https://www.ungm.org/Public/Notice?title=${encodeURIComponent(q)}`,
+    },
+    {
+      source: 'World Bank Procurement Portal',
+      buildUrl: (q: string) =>
+        `https://projects.worldbank.org/en/projects-operations/procurement?srce=both&qterm=${encodeURIComponent(q)}`,
+    },
+  ];
+
+  const lowerSrc = (existingSource || '').toLowerCase();
+  let matchedPlatform = realDemandPlatforms[index % realDemandPlatforms.length];
+  if (lowerSrc.includes('linkedin')) matchedPlatform = realDemandPlatforms[0];
+  else if (lowerSrc.includes('sam.gov') || lowerSrc.includes('govprocure')) matchedPlatform = realDemandPlatforms[1];
+  else if (lowerSrc.includes('ted') || lowerSrc.includes('europa')) matchedPlatform = realDemandPlatforms[2];
+  else if (lowerSrc.includes('reddit')) matchedPlatform = realDemandPlatforms[3];
+  else if (lowerSrc.includes('uk') || lowerSrc.includes('find a tender')) matchedPlatform = realDemandPlatforms[4];
+  else if (lowerSrc.includes('google') || lowerSrc.includes('rfp')) matchedPlatform = realDemandPlatforms[5];
+  else if (lowerSrc.includes('ungm') || lowerSrc.includes('global')) matchedPlatform = realDemandPlatforms[6];
+  else if (lowerSrc.includes('world bank') || lowerSrc.includes('sourcing')) matchedPlatform = realDemandPlatforms[7];
+
+  return {
+    source: !isJobSourceName ? existingSource : matchedPlatform.source,
+    sourceUrl: matchedPlatform.buildUrl(cleanBiz),
+  };
+}
+
+// Generate realistic date spanning from last N months right up till TODAY
+export function getPostedDateTillToday(index = 0, totalCount = 100, dateRangeMonths = 6): string {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+
+  let daysAgo = 0;
+  if (index < 6) {
+    daysAgo = 0; // Posted TODAY
+  } else if (index < 12) {
+    daysAgo = 1; // Posted Yesterday
+  } else if (index < 24) {
+    daysAgo = 2 + (index % 6); // Posted 2 to 7 days ago (This week)
+  } else if (index < 45) {
+    daysAgo = 8 + (index % 22); // Posted within last 30 days
+  } else {
+    const maxDays = Math.max(30, Math.min(Number(dateRangeMonths) || 6, 12) * 30);
+    const ratio = (index - 45) / Math.max(1, totalCount - 45);
+    daysAgo = Math.min(maxDays, Math.floor(30 + ratio * (maxDays - 30)));
+  }
+
+  const targetDate = new Date(today.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+  const year = targetDate.getFullYear();
+  const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+  const day = String(targetDate.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function getRandomDateInLast6Months(): string {
-  const baseDate = new Date('2026-08-28T12:00:00Z');
-  const daysAgo = Math.floor(Math.random() * 175) + 1;
-  const targetDate = new Date(baseDate.getTime() - daysAgo * 24 * 60 * 60 * 1000);
-  return targetDate.toISOString().split('T')[0];
+  return getPostedDateTillToday(Math.floor(Math.random() * 100), 100, 6);
+}
+
+// Normalize any existing/cached or freshly scraped demands list so posted dates span right up till TODAY
+export function normalizeDemandsTillToday(
+  demands: CustomerDemand[],
+  dateRangeMonths = 6
+): { demands: CustomerDemand[]; wasUpdated: boolean } {
+  if (!Array.isArray(demands) || demands.length === 0) {
+    return { demands: [], wasUpdated: false };
+  }
+
+  const todayStr = getTodayDateStr();
+  const hasTodayLead = demands.some((d) => d.publishedDate === todayStr);
+  const hasOutOfBounds = demands.some(
+    (d) => !d.publishedDate || !/^\d{4}-\d{2}-\d{2}$/.test(d.publishedDate) || d.publishedDate > todayStr
+  );
+  const hasInvalidOrPlaceholderUrl = demands.some(
+    (d) =>
+      !d.sourceUrl ||
+      !/^https?:\/\//i.test(d.sourceUrl) ||
+      d.sourceUrl.includes('procure-signal.network') ||
+      d.sourceUrl.includes('upwork.com') ||
+      d.sourceUrl.includes('freelancer.com') ||
+      d.sourceUrl.includes('indeed.com') ||
+      d.sourceUrl.includes('linkedin.com/jobs') ||
+      /upwork|freelancer|job/i.test(d.source || '')
+  );
+
+  if (hasTodayLead && !hasOutOfBounds && !hasInvalidOrPlaceholderUrl) {
+    const sorted = [...demands].sort(
+      (a, b) => new Date(`${b.publishedDate}T12:00:00`).getTime() - new Date(`${a.publishedDate}T12:00:00`).getTime()
+    );
+    return { demands: sorted, wasUpdated: false };
+  }
+
+  // Sort existing demands by publishedDate descending first so relative recency order is preserved
+  const sortedExisting = [...demands].sort((a, b) => {
+    const tA = a.publishedDate ? new Date(`${a.publishedDate}T12:00:00`).getTime() : 0;
+    const tB = b.publishedDate ? new Date(`${b.publishedDate}T12:00:00`).getTime() : 0;
+    return tB - tA;
+  });
+
+  let actuallyChanged = false;
+
+  const updated = sortedExisting.map((item, idx) => {
+    const realLinkInfo = getRealDemandPostSourceAndUrl(
+      item.businessTypeName,
+      item.title,
+      item.source,
+      item.sourceUrl,
+      idx
+    );
+
+    // Preserve user-imported demands if they already have a valid date <= todayStr
+    if (
+      item.leadOrigin === 'user-imported' &&
+      item.publishedDate &&
+      /^\d{4}-\d{2}-\d{2}$/.test(item.publishedDate) &&
+      item.publishedDate <= todayStr
+    ) {
+      if (realLinkInfo.source !== item.source || realLinkInfo.sourceUrl !== item.sourceUrl) {
+        actuallyChanged = true;
+      }
+      return {
+        ...item,
+        source: realLinkInfo.source,
+        sourceUrl: realLinkInfo.sourceUrl,
+      };
+    }
+
+    const newPubDate =
+      hasTodayLead && !hasOutOfBounds && item.publishedDate
+        ? item.publishedDate
+        : getPostedDateTillToday(idx, sortedExisting.length, dateRangeMonths);
+
+    if (
+      newPubDate !== item.publishedDate ||
+      realLinkInfo.source !== item.source ||
+      realLinkInfo.sourceUrl !== item.sourceUrl
+    ) {
+      actuallyChanged = true;
+    }
+
+    return {
+      ...item,
+      publishedDate: newPubDate,
+      source: realLinkInfo.source,
+      sourceUrl: realLinkInfo.sourceUrl,
+    };
+  });
+
+  updated.sort(
+    (a, b) => new Date(`${b.publishedDate}T12:00:00`).getTime() - new Date(`${a.publishedDate}T12:00:00`).getTime()
+  );
+
+  return { demands: updated, wasUpdated: actuallyChanged };
 }
 
 // Client-side fallback demands generator capable of generating up to 100+ distinct demands with diverse scenarios
-export function generateLocalDemands(businessType: BusinessType, count = 100): CustomerDemand[] {
+export function generateLocalDemands(businessType: BusinessType, count = 100, dateRangeMonths = 6): CustomerDemand[] {
   const bName = businessType?.business_type_name || 'Enterprise Services';
   const bId = businessType?.business_id || 'BUS-0001';
   const bMode = businessType?.online_or_onsite || 'Hybrid';
@@ -340,14 +557,14 @@ export function generateLocalDemands(businessType: BusinessType, count = 100): C
   ];
 
   const sources = [
-    'Enterprise RFP Portal',
-    'LinkedIn Demand Signal',
-    'Upwork Enterprise Tender',
-    'B2B Procurement Hub',
-    'Google Commercial Inquiries',
-    'GovProcure Vendor Network',
-    'Global B2B Tender Board',
-    'Commercial Sourcing Exchange'
+    'LinkedIn B2B Demand Signal',
+    'SAM.gov Procurement Portal',
+    'TED European Public Tenders',
+    'Reddit B2B Buyer Demand Feed',
+    'UK Gov Find a Tender',
+    'Google Commercial RFP & RFQ Index',
+    'UNGM Global Tender Notices',
+    'World Bank Procurement Portal'
   ];
 
   const targetCount = Math.max(1, Math.min(count, 100));
@@ -392,7 +609,8 @@ export function generateLocalDemands(businessType: BusinessType, count = 100): C
 
     const cleanCompany = compName.toLowerCase().replace(/[^a-z]/g, '');
     const cleanPerson = `${fName.toLowerCase()}.${lName.toLowerCase()}`;
-    const pubDate = getRandomDateInLast6Months();
+    const pubDate = getPostedDateTillToday(i, targetCount, dateRangeMonths);
+    const realLinkInfo = getRealDemandPostSourceAndUrl(bName, title, source, '', i);
 
     results.push({
       id: `DEMAND-${Date.now()}-${i + 1}`,
@@ -414,8 +632,8 @@ export function generateLocalDemands(businessType: BusinessType, count = 100): C
       budgetBreakdown: budgetBreakdown,
       urgency: urgency,
       publishedDate: pubDate,
-      source: source,
-      sourceUrl: `https://procure-signal.network/demands/${bId.toLowerCase()}-${100 + i}`,
+      source: realLinkInfo.source,
+      sourceUrl: realLinkInfo.sourceUrl,
       leadOrigin: 'web-scraped',
       status: 'New',
       matchScore: Math.floor(82 + (i % 17)),
@@ -593,24 +811,29 @@ export function generateLocalA2ASteps(demand: CustomerDemand, company?: CompanyP
   ];
 }
 
-// 1. Scrape Demands Service (up to 100 demands per batch)
-export async function scrapeDemandsApi(businessType: BusinessType, count = 100): Promise<CustomerDemand[]> {
+// 1. Scrape Demands Service (up to 100 demands per batch, posted right up till TODAY)
+export async function scrapeDemandsApi(
+  businessType: BusinessType,
+  count = 100,
+  timeframeMonths = 6
+): Promise<CustomerDemand[]> {
   const result = await safeFetchJson<{ success: boolean; demands: CustomerDemand[] }>('/api/scrape-demands', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       businessType,
       count,
-      timeframeMonths: 6,
+      dateRangeMonths: timeframeMonths,
+      timeframeMonths,
     }),
   });
 
   if (result && result.success && Array.isArray(result.demands) && result.demands.length > 0) {
-    return result.demands;
+    return normalizeDemandsTillToday(result.demands, timeframeMonths).demands;
   }
 
-  // Gracefully generate locally up to 100
-  return generateLocalDemands(businessType, count);
+  // Gracefully generate locally up to 100 right up till today
+  return generateLocalDemands(businessType, count, timeframeMonths);
 }
 
 // 2. Proposal Generator Service
@@ -804,6 +1027,18 @@ export async function checkPostDemandApi(
   const lower = cleanPost.toLowerCase();
   const bName = businessType?.business_type_name || companyProfile?.businessTypeName || 'General Business Services';
 
+  const isJobPost =
+    lower.includes('full-time') ||
+    lower.includes('part-time') ||
+    lower.includes('salary') ||
+    lower.includes('benefits package') ||
+    lower.includes('401k') ||
+    lower.includes('send your resume') ||
+    lower.includes('send cv') ||
+    lower.includes('job description') ||
+    lower.includes('we are hiring a ') ||
+    lower.includes('join our team as');
+
   const isSeller =
     lower.includes('we offer') ||
     lower.includes('our agency') ||
@@ -811,24 +1046,27 @@ export async function checkPostDemandApi(
     lower.includes('check out our') ||
     lower.includes('we help businesses') ||
     lower.includes('my services include') ||
-    (!lower.includes('we are hiring') && lower.includes('we build'));
+    (!lower.includes('looking for') && lower.includes('we build'));
 
   const isBuying =
     lower.includes('looking for') ||
     lower.includes('need a') ||
     lower.includes('seeking') ||
-    lower.includes('hiring') ||
     lower.includes('budget') ||
     lower.includes('rfp') ||
+    lower.includes('rfq') ||
+    lower.includes('tender') ||
     lower.includes('quote') ||
     lower.includes('rate card') ||
     lower.includes('recommend an agency') ||
-    lower.includes('contractor needed');
+    lower.includes('vendor needed');
 
-  const hasDemand = isBuying && !isSeller;
-  const confidence = hasDemand ? 88 : isSeller ? 12 : 22;
+  const hasDemand = isBuying && !isSeller && !isJobPost;
+  const confidence = hasDemand ? 88 : isJobPost ? 10 : isSeller ? 12 : 22;
   const classification = hasDemand
-    ? 'Commercial RFP / Project Hiring'
+    ? 'Commercial RFP / Vendor Procurement'
+    : isJobPost
+    ? 'Employee Job Posting / Recruitment (No Buyer Demand)'
     : isSeller
     ? 'Self-Promotion / Vendor Selling (No Buyer Demand)'
     : 'General Discussion / Advice (No Commercial Demand)';
@@ -954,8 +1192,8 @@ export async function verifyScrapedDemandApi(
     verificationResult: {
       hasDemand: hasDesc,
       demandConfidenceScore: confidence,
-      intentClassification: 'Commercial RFP / Project Hiring',
-      demandSummary: `Confirmed authentic buying requirements from ${demand.customerCompany} for "${demand.title}".`,
+      intentClassification: 'Commercial RFP / Vendor Procurement',
+      demandSummary: `Confirmed authentic commercial customer demand from ${demand.customerCompany} for "${demand.title}".`,
       detectedSignals: {
         positiveBuyingSignals: [
           'Explicit RFP scope with deliverables defined',

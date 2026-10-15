@@ -22,7 +22,7 @@ import {
   RotateCw
 } from 'lucide-react';
 import { CustomerDemand, BusinessType, CompanyProfile, PostDemandCheckResult } from '../types';
-import { verifyScrapedDemandApi } from '../services/apiService';
+import { verifyScrapedDemandApi, getRealDemandPostSourceAndUrl } from '../services/apiService';
 
 interface DemandVerificationModalProps {
   demand: CustomerDemand | null;
@@ -48,11 +48,19 @@ export const DemandVerificationModal: React.FC<DemandVerificationModalProps> = (
 
   if (!isOpen || !demand) return null;
 
+  const resolvedPostUrl = getRealDemandPostSourceAndUrl(
+    demand.businessTypeName || selectedBusinessType.business_type_name,
+    demand.title,
+    demand.source,
+    demand.sourceUrl,
+    0
+  ).sourceUrl;
+
   const result: PostDemandCheckResult = demand.verificationResult || {
     hasDemand: true,
     demandConfidenceScore: demand.matchScore ? Math.min(98, Math.max(80, demand.matchScore)) : 92,
-    intentClassification: 'Commercial RFP / Project Hiring',
-    demandSummary: `Confirmed genuine commercial RFP from ${demand.customerCompany} for "${demand.title}". The requirement lists actionable deliverables, budget allocation, and clear engagement urgency.`,
+    intentClassification: 'Commercial RFP / Vendor Procurement',
+    demandSummary: `Confirmed genuine commercial customer demand & RFP from ${demand.customerCompany} for "${demand.title}". The requirement lists actionable vendor deliverables, procurement budget allocation, and clear engagement urgency (verified non-job post).`,
     detectedSignals: {
       positiveBuyingSignals: [
         'Direct procurement statement seeking qualified vendor',
@@ -106,6 +114,8 @@ export const DemandVerificationModal: React.FC<DemandVerificationModalProps> = (
     const text = `=== REAL DEMAND VERIFICATION REPORT ===
 Target: ${demand.title}
 Client: ${demand.customerCompany} (${demand.contactPerson})
+Source Platform: ${demand.source}
+Real Post Link: ${resolvedPostUrl}
 Verdict: ${result.hasDemand ? 'AUTHENTIC COMMERCIAL DEMAND' : 'UNVERIFIED / LOW INTENT'}
 Confidence: ${result.demandConfidenceScore}%
 Classification: ${result.intentClassification}
@@ -178,10 +188,34 @@ Deliverables: ${(demand.requiredDeliverables || []).join(', ')}`;
               </div>
             </div>
 
-            {/* Original Post Description */}
-            <div className="mt-3 pt-3 border-t border-slate-200 text-xs text-slate-700 leading-relaxed bg-white/80 p-3 rounded-xl border border-slate-100">
-              <span className="font-bold text-slate-900 block mb-1 text-[11px]">Scraped Post / RFP Description:</span>
-              <p className="whitespace-pre-line">{demand.demandDescription}</p>
+            {/* Original Post Description & Real Link */}
+            <div className="mt-3 pt-3 border-t border-slate-200 text-xs text-slate-700 leading-relaxed bg-white/80 p-3 rounded-xl border border-slate-100 space-y-2.5">
+              <div>
+                <span className="font-bold text-slate-900 block mb-1 text-[11px]">Scraped Post / RFP Description:</span>
+                <p className="whitespace-pre-line">{demand.demandDescription}</p>
+              </div>
+              <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Real Demand Post Link ({demand.source}):</span>
+                  <a
+                    href={resolvedPostUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-mono font-semibold text-indigo-600 hover:text-indigo-800 hover:underline truncate block"
+                  >
+                    {resolvedPostUrl}
+                  </a>
+                </div>
+                <a
+                  href={resolvedPostUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shrink-0 transition-colors cursor-pointer"
+                >
+                  <span>Open Real Post</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
             </div>
           </div>
 

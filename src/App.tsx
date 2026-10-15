@@ -9,7 +9,7 @@ import { ProposalsVault } from './components/ProposalsVault';
 import { AdminPage } from './components/AdminPage';
 import { DEFAULT_BUSINESS_TYPES } from './data/defaultBusinessTypes';
 import { BusinessType, CompanyProfile, CustomerDemand, DemandStatus, AdminUser, Proposal, MessageLog } from './types';
-import { scrapeDemandsApi } from './services/apiService';
+import { scrapeDemandsApi, normalizeDemandsTillToday } from './services/apiService';
 import {
   subscribeToAuthState,
   fetchBusinessTypesFromFirestore,
@@ -148,10 +148,11 @@ export function App() {
       selectedBusinessType.business_id,
       (cloudDemands) => {
         if (cloudDemands.length > 0) {
+          const { demands: normalizedCloud } = normalizeDemandsTillToday(cloudDemands, 6);
           setDemandsByBusiness((prev) => {
             const existingList: CustomerDemand[] = prev[selectedBusinessType.business_id] || [];
             const existingMap = new Map<string, CustomerDemand>(existingList.map((d) => [d.id, d]));
-            const merged = cloudDemands.map((d) => {
+            const merged = normalizedCloud.map((d) => {
               const local = existingMap.get(d.id);
               if (local && (local.communicationLogs?.length || 0) > (d.communicationLogs?.length || 0)) {
                 return { ...d, communicationLogs: local.communicationLogs, proposals: local.proposals };
@@ -240,10 +241,11 @@ export function App() {
           const sanitized: Record<string, CustomerDemand[]> = {};
           for (const [key, list] of Object.entries(parsed)) {
             if (Array.isArray(list)) {
-              sanitized[key] = list.map((item: any) => ({
+              const mappedList = list.map((item: any) => ({
                 ...item,
-                leadOrigin: item.leadOrigin === 'user-imported' ? 'user-imported' : 'web-scraped',
+                leadOrigin: item.leadOrigin === 'user-imported' ? ('user-imported' as const) : ('web-scraped' as const),
               }));
+              sanitized[key] = normalizeDemandsTillToday(mappedList, 6).demands;
             }
           }
           return sanitized;
@@ -676,7 +678,7 @@ export function App() {
             demands={currentDemands}
             selectedBusinessType={selectedBusinessType}
             companyProfile={currentCompanyProfile}
-            onScrape={() => handleRunScraper(selectedBusinessType)}
+            onScrape={(count) => handleRunScraper(selectedBusinessType, count || 100)}
             isScraping={isScraping}
             onSelectCustomer={handleOpenCustomerModal}
             onUpdateDemandStatus={handleUpdateDemandStatus}

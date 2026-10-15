@@ -58,7 +58,8 @@ import {
   customerChatApi,
   a2aNegotiationApi,
   generateProposalApi,
-  verifyScrapedDemandApi
+  verifyScrapedDemandApi,
+  getRealDemandPostSourceAndUrl
 } from '../services/apiService';
 import { ProposalEditorModal } from './ProposalEditorModal';
 
@@ -92,6 +93,15 @@ export const DemandDetailModal: React.FC<DemandDetailModalProps> = ({
   const [emailCopied, setEmailCopied] = useState(false);
   const [emailSavedToast, setEmailSavedToast] = useState(false);
   const [copiedDemandDesc, setCopiedDemandDesc] = useState(false);
+  const [copiedPostUrl, setCopiedPostUrl] = useState(false);
+
+  const resolvedPostUrl = getRealDemandPostSourceAndUrl(
+    demand.businessTypeName,
+    demand.title,
+    demand.source,
+    demand.sourceUrl,
+    0
+  ).sourceUrl;
 
   // WhatsApp Form State
   const [whatsappText, setWhatsappText] = useState('');
@@ -135,6 +145,10 @@ export const DemandDetailModal: React.FC<DemandDetailModalProps> = ({
   // Proposal State
   const [activeProposal, setActiveProposal] = useState<Proposal | null>(demand.proposals?.[0] || null);
   const [isGeneratingProposal, setIsGeneratingProposal] = useState(false);
+  const [isTransmittingProposal, setIsTransmittingProposal] = useState(false);
+  const [proposalTransmittedToast, setProposalTransmittedToast] = useState(false);
+  const [isTransmissionModalOpen, setIsTransmissionModalOpen] = useState(false);
+  const [copiedProposalDocket, setCopiedProposalDocket] = useState(false);
   const [useHighThinking, setUseHighThinking] = useState(true);
   const [isProposalEditorOpen, setIsProposalEditorOpen] = useState(false);
   const [showBudgetMath, setShowBudgetMath] = useState(false);
@@ -483,6 +497,134 @@ export const DemandDetailModal: React.FC<DemandDetailModalProps> = ({
     });
   };
 
+  // Generate formatted plaintext proposal docket
+  const getFormattedProposalText = (prop: Proposal, dem: CustomerDemand) => {
+    return `=====================================================
+COMMERCIAL PROPOSAL: ${prop.title}
+Proposal ID: ${prop.id}
+Date: ${prop.createdDate}
+Status: ${prop.status}
+=====================================================
+
+PREPARED FOR:
+Client: ${dem.contactPerson} (${dem.role})
+Company: ${dem.customerCompany}
+Location: ${dem.location}
+
+PREPARED BY:
+Vendor: ${companyProfile.companyName || 'Enterprise Solutions Partner'}
+Contact: ${companyProfile.contactEmail || ''} | ${companyProfile.contactPhone || ''}
+
+-----------------------------------------------------
+1. EXECUTIVE SUMMARY:
+${prop.executiveSummary}
+
+-----------------------------------------------------
+2. UNDERSTANDING OF REQUIREMENTS:
+${prop.understandingOfRequirements}
+
+-----------------------------------------------------
+3. SCOPE OF WORK & PHASES:
+${(prop.scopeOfWork || []).map((s, i) => `Phase ${i + 1}: ${s.phase} [Duration: ${s.duration}]\n${s.description}`).join('\n\n')}
+
+-----------------------------------------------------
+4. KEY DELIVERABLES:
+${(prop.deliverables || []).map((d) => `• ${d}`).join('\n')}
+
+-----------------------------------------------------
+5. TIERED PRICING MATRIX:
+${(prop.tieredPricing || [])
+  .map(
+    (t) =>
+      `[${t.tierName}] - ${t.price}${t.recommended ? ' (RECOMMENDED)' : ''}\n${t.features.map((f) => `  - ${f}`).join('\n')}`
+  )
+  .join('\n\n')}
+
+-----------------------------------------------------
+6. TERMS & TIMELINE:
+Target Timeline: ${prop.timeline}
+Terms & Guarantee: ${prop.termsAndConditions}
+=====================================================`;
+  };
+
+  // Transmit Proposal Handler
+  const handleTransmitProposal = (channel: 'email' | 'whatsapp' | 'a2a' | 'direct' = 'direct') => {
+    if (!activeProposal) return;
+    setIsTransmittingProposal(true);
+
+    const updatedProposal: Proposal = {
+      ...activeProposal,
+      status: 'Sent' as const,
+    };
+    setActiveProposal(updatedProposal);
+
+    const existingProposals = demand.proposals || [];
+    const exists = existingProposals.some((p) => p.id === updatedProposal.id);
+    const updatedProposals = exists
+      ? existingProposals.map((p) => (p.id === updatedProposal.id ? updatedProposal : p))
+      : [updatedProposal, ...existingProposals];
+
+    const primaryTier = updatedProposal.tieredPricing.find((t) => t.recommended) || updatedProposal.tieredPricing[0];
+    const tierSummary = primaryTier ? `${primaryTier.tierName} (${primaryTier.price})` : 'Custom Tier';
+
+    const transmitLog: MessageLog = {
+      id: `MSG-PROP-${Date.now().toString().slice(-6)}`,
+      channel: channel === 'whatsapp' ? 'whatsapp' : channel === 'a2a' ? 'a2a' : 'email',
+      direction: 'outgoing',
+      sender: companyProfile.contactEmail || companyProfile.companyName || 'Sales Desk',
+      recipient: demand.email || demand.phone || demand.contactPerson,
+      subject: `Commercial Proposal Dispatched: ${updatedProposal.title}`,
+      content: `Official Proposal & Statement of Work (${updatedProposal.id}) transmitted to ${demand.contactPerson} at ${demand.customerCompany}.\n\nExecutive Summary: ${updatedProposal.executiveSummary}\nTarget Timeline: ${updatedProposal.timeline}\nSelected Package: ${tierSummary}\n\nDeliverables Included (${updatedProposal.deliverables?.length || 0}):\n${(updatedProposal.deliverables || []).map((d) => `• ${d}`).join('\n')}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + `, ${new Date().toLocaleDateString()}`,
+    };
+
+    const updatedDemand: CustomerDemand = {
+      ...demand,
+      status: 'Proposal Sent',
+      proposals: updatedProposals,
+      communicationLogs: [transmitLog, ...(demand.communicationLogs || [])],
+    };
+
+    onUpdateDemand(updatedDemand);
+
+    confetti({
+      particleCount: 75,
+      spread: 65,
+      origin: { y: 0.65 },
+    });
+
+    setProposalTransmittedToast(true);
+    setTimeout(() => setProposalTransmittedToast(false), 4000);
+    setIsTransmittingProposal(false);
+    setIsTransmissionModalOpen(true);
+  };
+
+  // Direct Channel Dispatchers
+  const handleSendProposalEmail = () => {
+    if (!activeProposal) return;
+    const fullText = getFormattedProposalText(activeProposal, demand);
+    const subject = `Commercial Proposal & Scope of Work: ${demand.title} - ${companyProfile.companyName || 'Vendor Solutions'}`;
+    const mailtoUrl = `mailto:${encodeURIComponent(demand.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(fullText)}`;
+    window.open(mailtoUrl, '_blank');
+  };
+
+  const handleSendProposalWhatsApp = () => {
+    if (!activeProposal) return;
+    const primaryTier = activeProposal.tieredPricing.find((t) => t.recommended) || activeProposal.tieredPricing[0];
+    const waMsg = `Hello ${demand.contactPerson},\n\nWe have prepared the official Commercial Proposal for "${demand.title}".\n\n📌 Proposal ID: ${activeProposal.id}\n💼 Estimated Scope: ${activeProposal.timeline}\n💰 Recommended Package: ${primaryTier ? `${primaryTier.tierName} (${primaryTier.price})` : activeProposal.tieredPricing[0]?.price || 'Competitive'}\n\nExecutive Summary:\n${activeProposal.executiveSummary}\n\nPlease let us know your availability to review the scope and schedule project kickoff.`;
+    const cleanPhone = demand.phone.replace(/[^0-9]/g, '');
+    const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(waMsg)}`;
+    window.open(waUrl, '_blank');
+  };
+
+  const handleCopyProposalSOW = () => {
+    if (!activeProposal) return;
+    const fullText = getFormattedProposalText(activeProposal, demand);
+    navigator.clipboard.writeText(fullText);
+    setCopiedProposalDocket(true);
+    setTimeout(() => setCopiedProposalDocket(false), 2500);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-950/60 backdrop-blur-xs animate-in fade-in overflow-y-auto">
       <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto text-slate-900">
@@ -506,6 +648,17 @@ export const DemandDetailModal: React.FC<DemandDetailModalProps> = ({
           </div>
 
           <div className="flex items-center space-x-2">
+            <a
+              href={resolvedPostUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:inline-flex items-center space-x-1.5 text-xs font-bold px-3 py-1 rounded-full bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition-colors cursor-pointer"
+              title={`Open real demand post on ${demand.source}`}
+            >
+              <ExternalLink className="h-3.5 w-3.5 text-indigo-600" />
+              <span>Real Post Link</span>
+            </a>
+
             <span
               className={`text-xs font-bold px-3 py-1 rounded-full border ${
                 demand.status === 'Won'
@@ -693,6 +846,64 @@ export const DemandDetailModal: React.FC<DemandDetailModalProps> = ({
                 </div>
                 <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-slate-800 text-xs sm:text-sm leading-relaxed whitespace-pre-line">
                   {demand.demandDescription}
+                </div>
+
+                {/* Real Demand Post Link Panel */}
+                <div className="p-3.5 bg-indigo-50/60 border border-indigo-200/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Globe className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                      <span className="text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
+                        Real Demand Post Link • {demand.source}
+                      </span>
+                      <span className="text-[10px] font-semibold text-slate-500">
+                        (Published: {demand.publishedDate})
+                      </span>
+                    </div>
+                    <a
+                      href={resolvedPostUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-mono font-semibold text-indigo-600 hover:text-indigo-800 hover:underline truncate block"
+                      title={resolvedPostUrl}
+                    >
+                      {resolvedPostUrl}
+                    </a>
+                  </div>
+
+                  <div className="flex items-center space-x-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(resolvedPostUrl);
+                        setCopiedPostUrl(true);
+                        setTimeout(() => setCopiedPostUrl(false), 2000);
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold inline-flex items-center space-x-1.5 transition-colors cursor-pointer"
+                    >
+                      {copiedPostUrl ? (
+                        <>
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          <span className="text-emerald-700">Copied URL</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5 text-slate-500" />
+                          <span>Copy Link</span>
+                        </>
+                      )}
+                    </button>
+
+                    <a
+                      href={resolvedPostUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+                    >
+                      <span>Open Demand Post</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  </div>
                 </div>
               </div>
 
@@ -1669,11 +1880,38 @@ export const DemandDetailModal: React.FC<DemandDetailModalProps> = ({
               {/* Proposal Document View */}
               {activeProposal ? (
                 <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-6 shadow-xs">
+                  {/* Transmission Status Banner */}
+                  {activeProposal.status === 'Sent' && (
+                    <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-center justify-between">
+                      <div className="flex items-center space-x-2.5">
+                        <CheckCircle2 className="h-5 w-5 text-teal-600 shrink-0" />
+                        <div>
+                          <p className="text-xs font-bold text-teal-900">Proposal Dispatched & Transmitted to Buyer</p>
+                          <p className="text-[11px] text-teal-700">
+                            Logged in Outreach History for {demand.contactPerson} at {demand.customerCompany}.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setIsTransmissionModalOpen(true)}
+                        className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[11px] font-bold cursor-pointer transition-colors shadow-2xs"
+                      >
+                        Dispatch Options
+                      </button>
+                    </div>
+                  )}
+
                   {/* Proposal Header */}
                   <div className="border-b border-slate-200 pb-4">
                     <div className="flex justify-between items-start">
                       <div>
-                        <span className="text-[10px] font-mono text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                          activeProposal.status === 'Sent'
+                            ? 'bg-teal-50 text-teal-700 border-teal-200 font-bold'
+                            : activeProposal.status === 'Accepted'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold'
+                            : 'bg-purple-50 text-purple-700 border-purple-200'
+                        }`}>
                           {activeProposal.id} • Status: {activeProposal.status}
                         </span>
                         <h3 className="text-lg font-bold text-slate-950 mt-1.5">{activeProposal.title}</h3>
@@ -1796,30 +2034,45 @@ export const DemandDetailModal: React.FC<DemandDetailModalProps> = ({
 
                   {/* Proposal Action Footer */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-200">
-                    <button
-                      onClick={() => window.print()}
-                      className="px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-xs cursor-pointer"
-                    >
-                      <Printer className="h-4 w-4" />
-                      <span>Print / Export PDF</span>
-                    </button>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => window.print()}
+                        className="px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-xs cursor-pointer"
+                      >
+                        <Printer className="h-4 w-4 text-slate-500" />
+                        <span>Print / Export PDF</span>
+                      </button>
+
+                      <button
+                        onClick={handleCopyProposalSOW}
+                        className="px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium flex items-center space-x-1.5 shadow-xs cursor-pointer"
+                      >
+                        {copiedProposalDocket ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4 text-slate-500" />}
+                        <span>{copiedProposalDocket ? 'Docket Copied!' : 'Copy Proposal Docket'}</span>
+                      </button>
+                    </div>
 
                     <div className="flex items-center space-x-2">
                       <button
-                        onClick={() => {
-                          const updatedProposal = { ...activeProposal, status: 'Sent' as const };
-                          setActiveProposal(updatedProposal);
-                          onUpdateDemand({
-                            ...demand,
-                            status: 'Proposal Sent',
-                            proposals: (demand.proposals || []).map((p) =>
-                              p.id === updatedProposal.id ? updatedProposal : p
-                            ),
-                          });
-                        }}
-                        className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                        onClick={() => handleTransmitProposal('direct')}
+                        disabled={isTransmittingProposal}
+                        className={`px-4 py-2 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center space-x-1.5 transition-all ${
+                          activeProposal.status === 'Sent'
+                            ? 'bg-teal-600 hover:bg-teal-700'
+                            : 'bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-700 hover:to-cyan-700'
+                        }`}
                       >
-                        Transmit Proposal to Customer
+                        {activeProposal.status === 'Sent' ? (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span>Transmitted to Customer ✓</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-4 w-4" />
+                            <span>Transmit Proposal to Customer</span>
+                          </>
+                        )}
                       </button>
 
                       <button
@@ -2056,6 +2309,133 @@ export const DemandDetailModal: React.FC<DemandDetailModalProps> = ({
           initialDemandId={demand.id}
           companyProfile={companyProfile}
         />
+      )}
+
+      {/* Proposal Transmission Dispatch Modal */}
+      {isTransmissionModalOpen && activeProposal && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden text-slate-900 animate-in zoom-in-95">
+            {/* Header */}
+            <div className="p-5 bg-gradient-to-r from-teal-600 to-cyan-700 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-white/15 rounded-xl border border-white/20">
+                  <Send className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold">Proposal Transmitted</h3>
+                  <p className="text-xs text-teal-100 mt-0.5">
+                    Statement of Work #{activeProposal.id} is active
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsTransmissionModalOpen(false)}
+                className="p-2 hover:bg-white/20 rounded-xl transition-colors text-white cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-5">
+              {/* Summary pill */}
+              <div className="bg-teal-50 border border-teal-200 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center space-x-2 text-teal-900 font-bold text-xs">
+                  <CheckCircle2 className="h-4 w-4 text-teal-600" />
+                  <span>CRM Status Updated to "Proposal Sent"</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  The commercial proposal has been recorded in your Outreach Hub logs for{' '}
+                  <strong className="text-slate-900">{demand.contactPerson}</strong> at{' '}
+                  <strong className="text-slate-900">{demand.customerCompany}</strong>.
+                </p>
+              </div>
+
+              {/* Direct Channel Dispatch Actions */}
+              <div className="space-y-2.5">
+                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                  Select Dispatch Channel
+                </span>
+
+                {/* Send via Email */}
+                <button
+                  onClick={handleSendProposalEmail}
+                  className="w-full p-3.5 bg-slate-50 hover:bg-teal-50/60 border border-slate-200 hover:border-teal-300 rounded-2xl flex items-center justify-between transition-all group cursor-pointer text-left"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-purple-100 text-purple-700 rounded-xl group-hover:bg-purple-200 transition-colors">
+                      <Mail className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">Launch Email Client (Pre-Formatted SOW)</span>
+                      <span className="text-[11px] text-slate-500 block truncate max-w-xs">{demand.email}</span>
+                    </div>
+                  </div>
+                  <ExternalLink className="h-4 w-4 text-slate-400 group-hover:text-teal-600 transition-colors" />
+                </button>
+
+                {/* Send via WhatsApp */}
+                <button
+                  onClick={handleSendProposalWhatsApp}
+                  className="w-full p-3.5 bg-slate-50 hover:bg-emerald-50/60 border border-slate-200 hover:border-emerald-300 rounded-2xl flex items-center justify-between transition-all group cursor-pointer text-left"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl group-hover:bg-emerald-200 transition-colors">
+                      <Phone className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">Dispatch via WhatsApp</span>
+                      <span className="text-[11px] text-slate-500 block">{demand.phone}</span>
+                    </div>
+                  </div>
+                  <ExternalLink className="h-4 w-4 text-slate-400 group-hover:text-emerald-600 transition-colors" />
+                </button>
+
+                {/* Copy SOW Text */}
+                <button
+                  onClick={handleCopyProposalSOW}
+                  className="w-full p-3.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-2xl flex items-center justify-between transition-all group cursor-pointer text-left"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-slate-200 text-slate-700 rounded-xl group-hover:bg-slate-300 transition-colors">
+                      {copiedProposalDocket ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4 text-slate-600" />}
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        {copiedProposalDocket ? 'Proposal Docket Copied!' : 'Copy Full SOW Document'}
+                      </span>
+                      <span className="text-[11px] text-slate-500 block">Plaintext formatted contract & pricing</span>
+                    </div>
+                  </div>
+                  <Copy className="h-4 w-4 text-slate-400 group-hover:text-slate-700 transition-colors" />
+                </button>
+              </div>
+
+              {/* Close Button */}
+              <div className="pt-2 flex justify-end">
+                <button
+                  onClick={() => setIsTransmissionModalOpen(false)}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-xs"
+                >
+                  Done & Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Success Toast for Proposal Transmission */}
+      {proposalTransmittedToast && (
+        <div className="fixed bottom-6 right-6 z-70 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl flex items-center space-x-3 border border-slate-700 animate-in slide-in-from-bottom-5">
+          <div className="p-1.5 bg-teal-500/20 text-teal-400 rounded-lg">
+            <CheckCircle2 className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="text-xs font-bold">Proposal Transmitted to Customer</p>
+            <p className="text-[10px] text-slate-400">Logged in Outreach Hub & Lead marked as Proposal Sent</p>
+          </div>
+        </div>
       )}
     </div>
   );

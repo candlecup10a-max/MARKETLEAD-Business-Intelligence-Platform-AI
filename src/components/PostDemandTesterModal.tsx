@@ -35,22 +35,28 @@ const PRESET_SAMPLE_POSTS = [
   {
     label: 'Real RFP Buyer (High Demand)',
     type: 'positive',
-    url: 'https://linkedin.com/posts/acme-procurement_hiring-bids',
-    text: `Looking for an established web development agency or security firm to audit and overhaul our multi-tenant SaaS application before Q4 launch. We need ISO27001 readiness, full automated penetration testing, and SSO (Okta + SAML) integration. 
+    url: 'https://www.linkedin.com/search/results/content/?keywords=RFP%20vendor%20procurement',
+    text: `RFP ANNOUNCEMENT: Acme Solutions is seeking an established vendor or commercial partner to supply and implement a turnkey multi-site operational solution before Q4 launch. Scope includes full SLA compliance, system deployment, and 12-month maintenance. 
 Budget approved: $35,000 - $60,000. 
-Must start within 10 days. Please send capabilities deck and rate card to sarah.miller@acmesolutions.io or DM me.`,
+Proposals due within 10 days. Please send vendor capabilities deck and commercial quote to sarah.miller@acmesolutions.io.`,
+  },
+  {
+    label: 'Employee Job Post (Rejected - Not a Demand)',
+    type: 'negative',
+    url: 'https://www.linkedin.com/jobs/',
+    text: `We are hiring a Full-Time Senior Operations Manager to join our internal team in New York! Salary: $120,000 - $145,000 + 401k + health benefits package. Must have 5+ years of experience. Send your resume and CV to careers@company.com to apply.`,
   },
   {
     label: 'Vendor Self-Promotion (Zero Buyer Demand)',
     type: 'negative',
-    url: 'https://twitter.com/devagency/status/1928371928',
-    text: `🚀 Want 10x faster growth? We build high-converting landing pages and bespoke mobile apps for B2B brands. Our team has shipped 100+ projects with 99.9% uptime. DM me today for a 100% free audit and discovery call! #agency #design #dev #marketing`,
+    url: 'https://x.com/search?q=agency%20services',
+    text: `🚀 Want 10x faster growth? We offer high-converting B2B services and turnkey solutions for enterprise brands. Our team has delivered 100+ contracts with 99.9% SLA uptime. DM me today for a 100% free audit and discovery call!`,
   },
   {
-    label: 'Community Question / Advice (No Commercial Demand)',
+    label: 'Community Advice (No Commercial Demand)',
     type: 'neutral',
-    url: 'https://reddit.com/r/startups/comments/9823h1',
-    text: `Hey founders, what tech stack do you recommend for building an MVP in 2026? We are thinking between Next.js and Remix. Just curious what has worked well for bootstrapped teams with no budget yet. Thanks for any advice!`,
+    url: 'https://www.reddit.com/r/smallbusiness/',
+    text: `Hey business owners, what workflow tools do you recommend for managing inventory in 2026? Just curious what has worked well for small teams with no budget yet. Thanks for any advice!`,
   },
 ];
 
@@ -133,7 +139,7 @@ export const PostDemandTesterModal: React.FC<PostDemandTesterModalProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 mt-0.5">
-                  Paste any real post, tweet, RFP, or forum thread to instantly verify whether genuine buyer demand exists.
+                  Paste any real RFP, RFQ, tender notice, or buyer post to verify genuine commercial demand (automatically filters out job postings & seller ads).
                 </p>
               </div>
             </div>
@@ -195,7 +201,7 @@ export const PostDemandTesterModal: React.FC<PostDemandTesterModalProps> = ({
                 rows={5}
                 value={postText}
                 onChange={(e) => setPostText(e.target.value)}
-                placeholder="Paste the raw text of a LinkedIn post, Tweet/X, Reddit thread, Upwork job, or email inquiry to verify if real commercial demand exists..."
+                placeholder="Paste the raw text of a B2B RFP, RFQ, procurement tender, LinkedIn buyer request, or client inquiry to verify real commercial demand (employee job postings are automatically excluded)..."
                 className="w-full p-3.5 text-xs text-slate-800 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:outline-none placeholder:text-slate-400 font-mono transition-colors"
               />
             </div>

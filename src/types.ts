@@ -201,10 +201,12 @@ export interface AdminUser {
 }
 
 export type DemandIntentClassification =
+  | 'Commercial RFP / Vendor Procurement'
   | 'Commercial RFP / Project Hiring'
   | 'Urgent Service Need'
   | 'Vendor Replacement / Switch'
   | 'Pricing & Feasibility Inquiry'
+  | 'Employee Job Posting / Recruitment (No Buyer Demand)'
   | 'General Discussion / Advice (No Commercial Demand)'
   | 'Self-Promotion / Vendor Selling (No Buyer Demand)'
   | 'Spam / Irrelevant Content';

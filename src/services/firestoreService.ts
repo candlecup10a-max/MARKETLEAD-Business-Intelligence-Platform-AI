@@ -260,36 +260,57 @@ export async function fetchDemandsFromFirestore(businessTypeId?: string): Promis
   }
 }
 
+let isBatchWriteInFlight = false;
+let lastBatchWriteTime = 0;
+
+function sanitizeFirestorePayload<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj));
+}
+
 export async function saveDemandToFirestore(demand: CustomerDemand): Promise<void> {
   const path = `demands/${demand.id}`;
   try {
-    await setDoc(doc(db, 'demands', demand.id), demand, { merge: true });
-  } catch (error) {
+    const cleanDemand = sanitizeFirestorePayload(demand);
+    await setDoc(doc(db, 'demands', demand.id), cleanDemand, { merge: true });
+  } catch (error: any) {
+    const msg = error?.message || String(error);
+    if (msg.includes('resource-exhausted') || msg.includes('maximum allowed queued writes')) {
+      console.warn('Firestore write queue busy, skipping background sync for demand:', demand.id);
+      return;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
 export async function batchSaveDemandsToFirestore(demands: CustomerDemand[]): Promise<void> {
   if (demands.length === 0) return;
+  const now = Date.now();
+  // Prevent overlapping or rapid-fire batch commits from exhausting Firestore client write stream
+  if (isBatchWriteInFlight || now - lastBatchWriteTime < 4000) {
+    return;
+  }
+
+  isBatchWriteInFlight = true;
+  lastBatchWriteTime = now;
   const path = 'demands';
   try {
-    const batch = writeBatch(db);
-    // Batch in groups of 500 (Firestore limit)
-    const chunks = [];
-    for (let i = 0; i < demands.length; i += 400) {
-      chunks.push(demands.slice(i, i + 400));
+    // Cap cloud sync batch to top 25 most recent demands per sync to keep Firestore write stream healthy
+    const topDemands = demands.slice(0, 25);
+    const b = writeBatch(db);
+    for (const d of topDemands) {
+      const docRef = doc(db, 'demands', d.id);
+      b.set(docRef, sanitizeFirestorePayload(d), { merge: true });
     }
-
-    for (const chunk of chunks) {
-      const b = writeBatch(db);
-      for (const d of chunk) {
-        const docRef = doc(db, 'demands', d.id);
-        b.set(docRef, d, { merge: true });
-      }
-      await b.commit();
+    await b.commit();
+  } catch (error: any) {
+    const msg = error?.message || String(error);
+    if (msg.includes('resource-exhausted') || msg.includes('maximum allowed queued writes')) {
+      console.warn('Firestore write stream throttled; demands remain persisted in local storage.');
+      return;
     }
-  } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  } finally {
+    isBatchWriteInFlight = false;
   }
 }
 

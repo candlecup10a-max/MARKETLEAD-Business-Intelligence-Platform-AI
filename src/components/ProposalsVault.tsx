@@ -20,7 +20,10 @@ import {
   Search,
   Filter,
   Layers,
-  Check
+  Check,
+  Send,
+  Mail,
+  Phone
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CustomerDemand, Proposal, CompanyProfile } from '../types';
@@ -52,6 +55,7 @@ export const ProposalsVault: React.FC<ProposalsVaultProps> = ({
   const [editingProposal, setEditingProposal] = useState<Proposal | null>(null);
   const [editingDemandId, setEditingDemandId] = useState<string | undefined>(undefined);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [transmittedProposalToastId, setTransmittedProposalToastId] = useState<string | null>(null);
 
   const toggleProposalExpanded = (id: string) => {
     setExpandedProposalIds((prev) => {
@@ -63,6 +67,46 @@ export const ProposalsVault: React.FC<ProposalsVaultProps> = ({
       }
       return next;
     });
+  };
+
+  // Transmit Proposal Directly from Vault
+  const handleTransmitProposalFromVault = (demand: CustomerDemand, proposal: Proposal) => {
+    const updatedProposal: Proposal = {
+      ...proposal,
+      status: 'Sent',
+    };
+
+    const primaryTier = proposal.tieredPricing.find((t) => t.recommended) || proposal.tieredPricing[0];
+    const tierSummary = primaryTier ? `${primaryTier.tierName} (${primaryTier.price})` : 'Custom Scope';
+
+    const transmitLog = {
+      id: `MSG-PROP-${Date.now().toString().slice(-6)}`,
+      channel: 'email' as const,
+      direction: 'outgoing' as const,
+      sender: companyProfile.contactEmail || companyProfile.companyName || 'Sales Desk',
+      recipient: demand.email || demand.contactPerson,
+      subject: `Commercial Proposal Dispatched: ${proposal.title}`,
+      content: `Official Proposal & Statement of Work (${proposal.id}) transmitted to ${demand.contactPerson} at ${demand.customerCompany}.\n\nExecutive Summary: ${proposal.executiveSummary}\nTarget Timeline: ${proposal.timeline}\nSelected Package: ${tierSummary}\n\nDeliverables Included (${proposal.deliverables?.length || 0}):\n${(proposal.deliverables || []).map((d) => `• ${d}`).join('\n')}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + `, ${new Date().toLocaleDateString()}`,
+    };
+
+    const updatedDemand: CustomerDemand = {
+      ...demand,
+      status: 'Proposal Sent',
+      proposals: (demand.proposals || []).map((p) => (p.id === proposal.id ? updatedProposal : p)),
+      communicationLogs: [transmitLog, ...(demand.communicationLogs || [])],
+    };
+
+    onUpdateDemand(updatedDemand);
+
+    confetti({
+      particleCount: 65,
+      spread: 60,
+      origin: { y: 0.6 },
+    });
+
+    setTransmittedProposalToastId(proposal.id);
+    setTimeout(() => setTransmittedProposalToastId(null), 3500);
   };
 
   // Collect all proposals across demands
@@ -581,6 +625,19 @@ ${proposal.termsAndConditions}
 
                   <div className="flex items-center space-x-2">
                     <button
+                      onClick={() => handleTransmitProposalFromVault(demand, proposal)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1 shadow-xs transition-colors cursor-pointer ${
+                        proposal.status === 'Sent'
+                          ? 'bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200'
+                          : 'bg-teal-600 hover:bg-teal-700 text-white'
+                      }`}
+                      title={proposal.status === 'Sent' ? 'Transmit again to buyer' : 'Transmit proposal to customer'}
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      <span>{proposal.status === 'Sent' ? 'Transmitted' : 'Transmit'}</span>
+                    </button>
+
+                    <button
                       onClick={() => onSelectCustomer(demand, 'proposal')}
                       className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center space-x-1 shadow-xs transition-colors cursor-pointer"
                     >
@@ -625,6 +682,19 @@ ${proposal.termsAndConditions}
             <Plus className="h-4 w-4" />
             <span>Create First Proposal</span>
           </button>
+        </div>
+      )}
+
+      {/* Transmitted Toast */}
+      {transmittedProposalToastId && (
+        <div className="fixed bottom-6 right-6 z-70 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl flex items-center space-x-3 border border-slate-700 animate-in slide-in-from-bottom-5">
+          <div className="p-1.5 bg-teal-500/20 text-teal-400 rounded-lg">
+            <CheckCircle2 className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="text-xs font-bold">Proposal Transmitted to Customer</p>
+            <p className="text-[10px] text-slate-400">Status marked as "Proposal Sent" & Logged in Outreach Hub</p>
+          </div>
         </div>
       )}
 

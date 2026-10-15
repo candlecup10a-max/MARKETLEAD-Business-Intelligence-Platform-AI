@@ -32,7 +32,10 @@ import {
   Upload,
   ShieldCheck,
   RotateCw,
-  SearchCheck
+  SearchCheck,
+  Copy,
+  Check,
+  Link2
 } from 'lucide-react';
 import { CustomerDemand, BusinessType, CompanyProfile, DemandStatus, UrgencyLevel, PostDemandCheckResult } from '../types';
 import { CountryDropdown } from './CountryDropdown';
@@ -40,7 +43,7 @@ import { findCountry, COUNTRIES } from '../data/countries';
 import { ImportRealDemandModal } from './ImportRealDemandModal';
 import { PostDemandTesterModal } from './PostDemandTesterModal';
 import { DemandVerificationModal } from './DemandVerificationModal';
-import { verifyScrapedDemandApi } from '../services/apiService';
+import { verifyScrapedDemandApi, getTodayDateStr, getRealDemandPostSourceAndUrl } from '../services/apiService';
 
 interface ScraperDashboardProps {
   demands: CustomerDemand[];
@@ -89,6 +92,26 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
   const [isBatchVerifying, setIsBatchVerifying] = useState<boolean>(false);
   const [batchVerifyProgress, setBatchVerifyProgress] = useState<{ current: number; total: number } | null>(null);
   const [verifyingDemandIds, setVerifyingDemandIds] = useState<Set<string>>(new Set());
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+
+  const getResolvedPostUrl = (d: CustomerDemand, idx = 0) => {
+    return getRealDemandPostSourceAndUrl(
+      d.businessTypeName || selectedBusinessType.business_type_name,
+      d.title,
+      d.source,
+      d.sourceUrl,
+      idx
+    ).sourceUrl;
+  };
+
+  const handleCopyPostLink = (demand: CustomerDemand, url: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(url);
+    setCopiedLinkId(demand.id);
+    setTimeout(() => {
+      setCopiedLinkId((prev) => (prev === demand.id ? null : prev));
+    }, 2000);
+  };
 
   const toggleDemandExpanded = (id: string) => {
     setExpandedDemandIds((prev) => {
@@ -116,8 +139,8 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
   // Export to CSV helper
   const handleExportCsv = () => {
     if (demands.length === 0) return;
-    const headers = ['ID', 'Company', 'Contact Person', 'Role', 'Email', 'Phone', 'Location', 'Title', 'Description', 'Budget', 'Urgency', 'Published Date', 'Source', 'Origin', 'Status', 'Match Score'];
-    const rows = demands.map((d) => [
+    const headers = ['ID', 'Company', 'Contact Person', 'Role', 'Email', 'Phone', 'Location', 'Title', 'Description', 'Budget', 'Urgency', 'Published Date', 'Source', 'Post Link (URL)', 'Origin', 'Status', 'Match Score'];
+    const rows = demands.map((d, idx) => [
       `"${d.id}"`,
       `"${(d.customerCompany || '').replace(/"/g, '""')}"`,
       `"${(d.contactPerson || '').replace(/"/g, '""')}"`,
@@ -131,6 +154,7 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
       `"${(d.urgency || '').replace(/"/g, '""')}"`,
       `"${(d.publishedDate || '').replace(/"/g, '""')}"`,
       `"${(d.source || '').replace(/"/g, '""')}"`,
+      `"${getResolvedPostUrl(d, idx).replace(/"/g, '""')}"`,
       `"${d.leadOrigin || 'web-scraped'}"`,
       `"${d.status}"`,
       d.matchScore,
@@ -213,15 +237,29 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
   };
 
   // Filter & Sort
+  const todayStr = getTodayDateStr();
+
   const filteredAndSortedDemands = useMemo(() => {
-    // Current live calendar reference: August 2026
-    const now = new Date('2026-08-28T12:00:00Z').getTime();
-    const maxAgeMs = timeFilterMonths * 30 * 24 * 60 * 60 * 1000;
+    // Current live calendar reference: dynamic TODAY (end of current day so all today's posts are included)
+    const nowDate = new Date();
+    nowDate.setHours(23, 59, 59, 999);
+    const now = nowDate.getTime();
+    // timeFilterMonths: 0 = Today only, 0.25 = Last 7 Days, 1 = Last 30 Days, 3 = Last 3 Months, 6 = Last 6 Months till Today
+    const maxAgeDays =
+      timeFilterMonths === 0
+        ? 1
+        : timeFilterMonths === 0.25
+        ? 7
+        : timeFilterMonths * 30;
+    const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
 
     let list = demands.filter((d) => {
-      // Date filter (last X months)
-      const pubTime = new Date(d.publishedDate).getTime();
-      const withinRange = now - pubTime <= maxAgeMs + 7 * 24 * 60 * 60 * 1000; // grace period
+      // Date filter (posted till today)
+      const pubTime = new Date(`${d.publishedDate}T12:00:00`).getTime();
+      const withinRange =
+        timeFilterMonths === 0
+          ? d.publishedDate === todayStr
+          : now - pubTime <= maxAgeMs + 24 * 60 * 60 * 1000 && pubTime <= now;
 
       const matchSearch =
         d.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -265,7 +303,7 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
     // Sorting (strictly by publishedDate descending by default as per prompt)
     list.sort((a, b) => {
       if (sortBy === 'publishedDate') {
-        return new Date(b.publishedDate).getTime() - new Date(a.publishedDate).getTime();
+        return new Date(`${b.publishedDate}T12:00:00`).getTime() - new Date(`${a.publishedDate}T12:00:00`).getTime();
       }
       if (sortBy === 'matchScore') {
         return b.matchScore - a.matchScore;
@@ -279,7 +317,12 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
     });
 
     return list;
-  }, [demands, searchTerm, timeFilterMonths, sortBy, statusFilter, urgencyFilter, originFilter, selectedCountryCode]);
+  }, [demands, searchTerm, timeFilterMonths, sortBy, statusFilter, urgencyFilter, originFilter, verificationFilter, selectedCountryCode, todayStr]);
+
+  const postedTodayCount = useMemo(
+    () => demands.filter((d) => d.publishedDate === todayStr).length,
+    [demands, todayStr]
+  );
 
   // Pagination calculation
   const totalPages = Math.ceil(filteredAndSortedDemands.length / itemsPerPage) || 1;
@@ -290,12 +333,23 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
 
   const formatDate = (dateStr: string) => {
     try {
-      const d = new Date(dateStr);
-      return d.toLocaleDateString('en-US', {
+      const cleanDate = /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? `${dateStr}T12:00:00` : dateStr;
+      const d = new Date(cleanDate);
+      const formatted = d.toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
       });
+      if (dateStr === todayStr) {
+        return `Today (${formatted})`;
+      }
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+      if (dateStr === yStr) {
+        return `Yesterday (${formatted})`;
+      }
+      return formatted;
     } catch {
       return dateStr;
     }
@@ -381,7 +435,7 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
             </h1>
 
             <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl">
-              Real-time procurement engine crawling live internet RFP boards and ingesting user RFPs published in the <strong className="text-teal-300">last 6 months</strong>.
+              Real-time procurement engine crawling live internet RFP boards and ingesting user RFPs published right up <strong className="text-teal-300">till today ({formatDate(todayStr).replace(/^Today \((.*)\)$/, '$1')})</strong>.
             </p>
           </div>
 
@@ -487,10 +541,14 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="flex items-center space-x-1.5 bg-teal-500/20 border border-teal-500/30 text-teal-200 px-2.5 py-1 rounded-full font-semibold">
+              <Calendar className="h-3.5 w-3.5 text-teal-300" />
+              <span>Scraped Till Today: <strong>{todayStr}</strong> ({postedTodayCount} posted today)</span>
+            </span>
             <span className="flex items-center space-x-1">
               <Clock className="h-3.5 w-3.5 text-teal-400" />
-              <span>Timeframe: <strong>Last 6 Months (Newest First)</strong></span>
+              <span>Window: <strong>Last 6 Months Till Today (Newest First)</strong></span>
             </span>
           </div>
         </div>
@@ -571,19 +629,21 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
             {/* Time Filter Pills */}
             <div className="flex items-center space-x-1 bg-slate-50 px-2 py-1 rounded-xl border border-slate-200 text-xs">
               <Calendar className="h-3.5 w-3.5 text-teal-600 mr-1" />
-              <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">Date:</span>
+              <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">Posted:</span>
               {[
-                { label: '6M', val: 6 },
-                { label: '3M', val: 3 },
+                { label: 'Today', val: 0 },
+                { label: '7D', val: 0.25 },
                 { label: '30D', val: 1 },
+                { label: '3M', val: 3 },
+                { label: '6M (Till Today)', val: 6 },
               ].map((t) => (
                 <button
-                  key={t.val}
+                  key={t.label}
                   onClick={() => {
                     setTimeFilterMonths(t.val);
                     setCurrentPage(1);
                   }}
-                  className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors ${
+                  className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
                     timeFilterMonths === t.val
                       ? 'bg-teal-600 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
@@ -678,8 +738,9 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
       {/* Demand Cards List (Ordered by Published Date) */}
       {paginatedDemands.length > 0 ? (
         <div className="space-y-4">
-          {paginatedDemands.map((demand) => {
+          {paginatedDemands.map((demand, cardIdx) => {
             const isExpanded = expandAll || expandedDemandIds.has(demand.id);
+            const postUrl = getResolvedPostUrl(demand, cardIdx);
 
             return (
               <div
@@ -727,9 +788,17 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
                       {getUrgencyBadge(demand.urgency)}
                       {getStatusBadge(demand.status)}
 
-                      <span className="text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
-                        Source: {demand.source}
-                      </span>
+                      <a
+                        href={postUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center space-x-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-0.5 rounded-full border border-indigo-200 transition-colors cursor-pointer"
+                        title={`Open real demand post on ${demand.source}: ${postUrl}`}
+                      >
+                        <ExternalLink className="h-3 w-3 text-indigo-600" />
+                        <span>Source: {demand.source}</span>
+                      </a>
                     </div>
 
                     {/* Title */}
@@ -771,7 +840,7 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
                         {demand.demandDescription}
                       </p>
 
-                      <div className="flex items-center space-x-3">
+                      <div className="flex flex-wrap items-center gap-3">
                         <button
                           type="button"
                           onClick={(e) => {
@@ -792,6 +861,65 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
                             </>
                           )}
                         </button>
+                      </div>
+                    </div>
+
+                    {/* Real Demand Post Link Bar */}
+                    <div className="p-2.5 bg-slate-50 border border-slate-200/90 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <div className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg shrink-0">
+                          <Link2 className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                              Real Demand Post Link ({demand.source}):
+                            </span>
+                          </div>
+                          <a
+                            href={postUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs font-mono font-semibold text-indigo-600 hover:text-indigo-800 hover:underline truncate block"
+                            title={postUrl}
+                          >
+                            {postUrl}
+                          </a>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => handleCopyPostLink(demand, postUrl, e)}
+                          className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-[11px] font-semibold inline-flex items-center space-x-1 transition-colors cursor-pointer"
+                          title="Copy demand post URL to clipboard"
+                        >
+                          {copiedLinkId === demand.id ? (
+                            <>
+                              <Check className="h-3 w-3 text-emerald-600" />
+                              <span className="text-emerald-700">Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3 w-3 text-slate-500" />
+                              <span>Copy Link</span>
+                            </>
+                          )}
+                        </button>
+
+                        <a
+                          href={postUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center space-x-1 shadow-2xs transition-colors cursor-pointer"
+                          title="Open original demand post in a new tab"
+                        >
+                          <span>Open Post</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
                       </div>
                     </div>
 
@@ -908,6 +1036,20 @@ export const ScraperDashboard: React.FC<ScraperDashboardProps> = ({
                           <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
                           <span>Proof Audit</span>
                         </button>
+
+                        {/* 7. Direct Real Demand Post Link */}
+                        <a
+                          id={`btn-post-link-${demand.id}`}
+                          href={postUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="col-span-2 flex items-center justify-center space-x-1.5 py-1.5 px-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                          title={`Open real demand post on ${demand.source}`}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 text-indigo-600" />
+                          <span>View Real Demand Post</span>
+                        </a>
                       </div>
                     </div>
                   </div>
